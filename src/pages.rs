@@ -12,7 +12,7 @@ use paquets::prelude::*;
 use paquets::vitesse::Response;
 
 use crate::Site;
-use crate::assets::{MANIFEST_URL, THEME_COLOR, WASM, WASM_JS};
+use crate::assets::{MANIFEST_URL, THEME_COLOR, WASM, WASM_JS, versioned};
 
 const DESCRIPTION: &str = "Alley : des salons de discussion éphémères, chiffrés de bout en bout. \
 Un pseudonyme, et c'est tout ; rien n'est enregistré, et tout disparaît à minuit. Messages, photos, \
@@ -45,15 +45,14 @@ fn seo(site: &Site, path: &str) -> Seo {
         .locale("fr_FR")
 }
 
-/// Démarre le navigateur, écrit en Rust et compilé en WebAssembly : la seule
-/// ligne de JavaScript qu'exige un navigateur pour charger un module
-/// WebAssembly, générée ici comme le fait Paquets pour ses îlots (autorisée
-/// par son empreinte dans la politique de sécurité de la page). `page` dit au
-/// module s'il anime la vitrine ou l'application.
+/// Charge le navigateur, écrit en Rust et compilé en WebAssembly : la colle
+/// générée par `cargo xtask web` démarre le module d'elle-même, la page n'a
+/// aucun script en ligne. `page` dit au module s'il anime la vitrine ou
+/// l'application.
 fn boot(site: &Site, page: &str) -> String {
-    let (js, wasm) = (site.url(WASM_JS), site.url(WASM));
+    let (js, wasm) = (versioned(site, WASM_JS), versioned(site, WASM));
     format!(
-        r#"<meta name="alley-page" content="{page}"/><link rel="modulepreload" href="{js}"/><link rel="preload" href="{wasm}" as="fetch" type="application/wasm" crossorigin=""/><script type="module">import init from "{js}";init({{module_or_path:"{wasm}"}});</script>"#
+        r#"<meta name="alley-page" content="{page}"/><link rel="preload" href="{wasm}" as="fetch" type="application/wasm" crossorigin=""/><script type="module" src="{js}"></script>"#
     )
 }
 
@@ -67,7 +66,7 @@ pub fn home(site: &Site) -> Page {
         ))
         .plain()
         .head(head_tags(site))
-        .stylesheet(site.url("/assets/site.css"))
+        .stylesheet(versioned(site, "/assets/site.css"))
         .head(boot(site, "site"))
         .body(site_header(site))
         .body(hero(site))
@@ -331,7 +330,7 @@ pub fn app_shell(site: &Site) -> Page {
         .seo(seo(site, "/app/"))
         .plain()
         .head(head_tags(site))
-        .stylesheet(site.url("/assets/app.css"))
+        .stylesheet(versioned(site, "/assets/app.css"))
         .head(boot(site, "app"))
         .body(
             div()
@@ -356,7 +355,7 @@ pub fn not_found(site: &Site) -> Page {
         .lang("fr")
         .plain()
         .head(head_tags(site))
-        .stylesheet(site.url("/assets/site.css"))
+        .stylesheet(versioned(site, "/assets/site.css"))
         .seo(Seo::new().noindex(true))
         .status(404)
         .body(site_header(site))

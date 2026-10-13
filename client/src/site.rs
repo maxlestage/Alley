@@ -39,8 +39,7 @@ fn detect_os() -> Option<&'static str> {
 }
 
 pub fn start() {
-    let base = meta("alley-base");
-    crate::app::register_worker(&base);
+    crate::app::retire_worker();
     let os = detect_os();
     if let Some(os) = os
         && let Some(card) = query(&format!(".platform[data-os=\"{os}\"]"))

@@ -33,9 +33,12 @@ voir [Déploiement](#déploiement).
 - 📦 **Servi par [Paquets](https://github.com/maxlestage/Paquets)** : Vitesse
   (HTTP + WebSocket), Securite (WAF, limites de débit, CSP stricte, HTTPS
   imposé, HSTS, CORS), Active (pages SEO, PWA).
-- 🦀 **100 % Rust** : le serveur et tout le navigateur, compilé en
-  **WebAssembly** ([`client/`](client/)). Aucune ligne de JavaScript écrite à la
-  main.
+- 🦀 **100 % Rust** : le serveur, tout le navigateur compilé en
+  **WebAssembly** ([`client/`](client/)), les styles ([`src/style/`](src/style/))
+  et la compilation elle-même ([`xtask/`](xtask/)). Ni JavaScript, ni CSS, ni
+  script shell écrits à la main : le seul JavaScript livré est la colle que
+  génère wasm-bindgen pour charger le module (un navigateur ne sait pas
+  démarrer du WebAssembly sans elle).
 - 📱 **Sur tous les systèmes** : application web installable (iPhone et iPad
   via Safari → Partager → *Sur l'écran d'accueil*, Android, Windows, macOS,
   Linux, ChromeOS).
@@ -85,15 +88,14 @@ Pages, les deux en HTTPS.
 | [`heroku.yml`](.github/workflows/heroku.yml) | construit l'image Docker sur Heroku, règle `ALLEY_ALLOWED_ORIGINS`, puis republie Pages |
 | [`pages.yml`](.github/workflows/pages.yml) | `alley export` sous `/<dépôt>` avec l'adresse de l'API, publication sur GitHub Pages |
 
-Sans API configurée, l'app GitHub Pages demande l'adresse d'un serveur Alley au
-premier lancement (modifiable ensuite dans *Réglages → Avancé*).
+Sans API configurée, l'app GitHub Pages demande l'adresse d'un serveur Alley
+sur l'écran d'accueil (elle n'est jamais enregistrée).
 
 ## Lancer en local
 
 ```sh
 rustup target add wasm32-unknown-unknown
-scripts/wasm-bindgen.sh                    # wasm-bindgen, à la version de Cargo.lock
-scripts/web.sh                             # le navigateur : client/ → client/pkg/ (WebAssembly)
+cargo xtask web                            # le navigateur : client/ → client/pkg/ (WebAssembly)
 cargo run                                  # http://localhost:3000
 BASE_PATH=/Alley ALLEY_API_URL=https://mon-api.herokuapp.com cargo run -- export dist
 ```
@@ -132,8 +134,9 @@ disparu au départ du dernier, et écran vidé à minuit (horloge simulée).
 | `src/protocol.rs` | ce que le serveur vérifie des jetons et des clés |
 | `src/rooms.rs` | les salons, en mémoire : présence, relais, minuit |
 | `src/api.rs` | les routes de l'API et la WebSocket des salons |
-| `src/pages.rs` | la vitrine et la coquille de l'app, la ligne de démarrage du WebAssembly |
-| `src/assets.rs` | fichiers du navigateur (WebAssembly compris), manifeste et service worker |
+| `src/pages.rs` | la vitrine et la coquille de l'app |
+| `src/style/` | les styles, écrits en Rust et rendus en CSS au démarrage |
+| `src/assets.rs` | fichiers du navigateur (WebAssembly compris, adresses versionnées) et manifeste |
 | `src/export.rs` | l'export statique pour GitHub Pages |
 | `build.rs` | range `client/pkg/` dans le binaire |
 | `client/src/crypto.rs` | AES-256-GCM, X25519 + HKDF (format Brocolis) |
@@ -141,5 +144,5 @@ disparu au départ du dernier, et écran vidé à minuit (horloge simulée).
 | `client/src/ui.rs`, `dom.rs` | l'affichage, construit en Rust (aucun HTML injecté) |
 | `client/src/call.rs` | les appels WebRTC |
 | `client/src/site.rs` | la vitrine (installation selon l'appareil) |
-| `web/*.css`, `web/icons/` | les styles et les icônes |
-| `scripts/web.sh`, `scripts/wasm-bindgen.sh` | compiler le navigateur |
+| `web/icons/`, `web/favicon.svg` | les icônes |
+| `xtask/` | `cargo xtask web` : compile le navigateur et génère sa colle avec la bibliothèque de wasm-bindgen |

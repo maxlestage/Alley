@@ -1,4 +1,4 @@
-//! Range le navigateur compilé (`client/pkg/`, voir `scripts/web.sh`) dans le
+//! Range le navigateur compilé (`client/pkg/`, voir `cargo xtask web`) dans le
 //! programme : un seul binaire à déployer. Sans lui (un `cargo test` avant la
 //! compilation WebAssembly), des fichiers vides prennent sa place.
 
@@ -16,7 +16,7 @@ fn main() {
             std::fs::copy(&source, &target).expect("copie du navigateur");
         } else {
             println!(
-                "cargo:warning=client/pkg/{name} manque : lancez scripts/web.sh pour compiler le navigateur"
+                "cargo:warning=client/pkg/{name} manque : lancez `cargo xtask web` pour compiler le navigateur"
             );
             std::fs::write(&target, b"").expect("fichier vide");
         }
