@@ -1,456 +1,262 @@
-//! L'API de bout en bout, avec la même application que la production
-//! (`alley::app().test()`), et des jetons chiffrés par le code même du
-//! navigateur (`alley_web::crypto`, compilé ici sans WebAssembly).
+//! Alley de bout en bout, avec la même application que la production
+//! (`alley::app()`) : l'API sur le client de test, et de vrais salons en
+//! WebSocket sur un vrai port, chiffrés par le code même du navigateur
+//! (`alley_web::crypto`, compilé ici sans WebAssembly).
 
-use alley_web::crypto;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
+use std::time::Duration;
+
+use alley_web::crypto::{self, Identity};
+use futures_util::{SinkExt, StreamExt};
 use paquets::serde_json::{Value, json};
 use paquets::test::TestClient;
-use sha2::{Digest, Sha256};
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn sha(parts: &[&[u8]]) -> [u8; 32] {
-    let mut h = Sha256::new();
-    for p in parts {
-        h.update(p);
-    }
-    h.finalize().into()
-}
-
-fn sha_hex(text: &str) -> String {
-    hex(&sha(&[text.as_bytes()]))
-}
-
-/// Un serveur vu par un navigateur : sa clé actuelle et ce qui en dérive.
-struct Guild {
-    key: [u8; 32],
-    gid: String,
-    access: String,
-    admin: String,
-}
-
-impl Guild {
-    fn new(seed: u8) -> Guild {
-        let key = [seed; 32];
-        Guild {
-            key,
-            gid: hex(&sha(&[b"brocolis-conv-v1", &key]))[..32].to_owned(),
-            access: access_of(&key),
-            admin: hex(&sha(&[b"admin", &key])),
-        }
-    }
-
-    /// Un jeton `[[BROCOLIS:v1:…]]`, comme `sealToken` dans le navigateur.
-    fn seal(&self, text: &str) -> String {
-        seal(&self.key, text)
-    }
-
-    fn open(&self, token: &str) -> String {
-        crypto::open_token(&self.key, token).expect("jeton de ce serveur")
-    }
-}
-
-fn access_of(key: &[u8; 32]) -> String {
-    hex(&sha(&[b"alley-access-v1", key]))
-}
-
-/// Un jeton `[[BROCOLIS:v1:…]]`, chiffré par le code même du navigateur.
-fn seal(key: &[u8; 32], text: &str) -> String {
-    crypto::seal_token(key, text)
-}
-
-fn member(n: u8) -> String {
-    hex(&[n; 32])
-}
-
-/// L'identifiant public d'un membre, comme le calcule le navigateur.
-fn member_id(secret: &str) -> String {
-    sha_hex(secret)[..16].to_owned()
-}
+use tokio_tungstenite::tungstenite::Message;
 
 async fn client() -> TestClient {
     alley::app().test().await
 }
 
-async fn create(client: &TestClient, g: &Guild) -> Value {
+#[tokio::test]
+async fn rooms_are_found_by_name_and_private_ones_are_hidden() {
+    let client = client().await;
     let res = client
-        .post("/api/v1/guilds")
-        .json(&json!({
-            "gid": g.gid,
-            "access": g.access,
-            "admin": g.admin,
-            "state": g.seal(r#"{"name":"Les copains","channels":[],"keys":[]}"#),
-        }))
+        .post("/api/v1/rooms")
+        .json(&json!({ "name": "  Soirée   jeux ", "tz": 120 }))
         .await;
     assert_eq!(res.status(), 201, "{}", res.text());
-    res.json()
-}
+    let room: Value = res.json();
+    assert_eq!(room["name"], "Soirée jeux");
+    let expires = room["expires_at"].as_i64().unwrap();
+    assert!(
+        expires > alley::rooms::now_ms() && expires <= alley::rooms::now_ms() + 24 * 3600 * 1000
+    );
 
-async fn join(client: &TestClient, g: &Guild, secret: &str, name: &str) -> u16 {
-    client
-        .put(&format!("/api/v1/guilds/{}/members/me", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-member", secret)
-        .json(&json!({ "profile": g.seal(name) }))
-        .await
-        .status()
-        .as_u16()
-}
-
-/// Un message : le jeton, et l'empreinte de la preuve de son auteur.
-async fn post(client: &TestClient, g: &Guild, text: &str, proof: &str) -> i64 {
-    let res = client
-        .post(&format!("/api/v1/messages/{}", g.gid))
-        .header("x-alley-access", &g.access)
-        .json(&json!({ "body": g.seal(text), "owner": sha_hex(proof) }))
-        .await;
-    assert_eq!(res.status(), 201, "{}", res.text());
-    res.json::<Value>()["id"].as_i64().unwrap()
-}
-
-#[tokio::test]
-async fn messages_reveal_nothing_and_only_their_author_edits_them() {
-    let client = client().await;
-    let g = Guild::new(1);
-    let created = create(&client, &g).await;
-    assert_eq!(created["epoch"], 0);
-    assert_eq!(join(&client, &g, &member(0xa1), "Ada").await, 200);
-
-    // L'auteur garde sa preuve pour lui ; le serveur n'en a que l'empreinte.
-    let proof = sha_hex(&format!("{}:sel", member(0xa1)));
-    let mid = post(&client, &g, "salut 👋", &proof).await;
-
-    let page: Value = client
-        .get(&format!("/api/v1/messages/{}", g.gid))
-        .header("x-alley-access", &g.access)
+    // Le même nom, accents et majuscules mis à part, mène au même salon.
+    let again: Value = client
+        .post("/api/v1/rooms")
+        .json(&json!({ "name": "soiree JEUX" }))
         .await
         .json();
-    let first = &page["messages"][0];
-    assert_eq!(g.open(first["body"].as_str().unwrap()), "salut 👋");
-    // Ni auteur, ni salon, ni heure : seulement un numéro et un jeton.
-    let keys: Vec<&str> = first
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect();
-    assert_eq!(keys.len(), 3, "{keys:?}");
-    assert!(keys.contains(&"id") && keys.contains(&"body") && keys.contains(&"edited"));
+    assert_eq!(again["id"], room["id"]);
 
-    // Une mauvaise preuve ne modifie ni ne supprime rien.
-    let res = client
-        .patch(&format!("/api/v1/messages/{}/{mid}", g.gid))
-        .header("x-alley-access", &g.access)
-        .json(&json!({ "body": g.seal("piraté"), "proof": sha_hex("autre") }))
-        .await;
-    assert_eq!(res.status(), 403);
-    let res = client
-        .delete(&format!("/api/v1/messages/{}/{mid}", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-proof", &sha_hex("autre"))
-        .await;
-    assert_eq!(res.status(), 403);
+    let found: Value = client.get("/api/v1/rooms?q=SOIR").await.json();
+    assert_eq!(found["rooms"].as_array().unwrap().len(), 1);
+    let none: Value = client.get("/api/v1/rooms?q=th%C3%A9").await.json();
+    assert!(none["rooms"].as_array().unwrap().is_empty());
 
-    // La bonne, oui.
-    let res = client
-        .patch(&format!("/api/v1/messages/{}/{mid}", g.gid))
-        .header("x-alley-access", &g.access)
-        .json(&json!({ "body": g.seal("salut à tous 👋"), "proof": proof }))
-        .await;
-    assert_eq!(res.status(), 200, "{}", res.text());
-    assert_eq!(res.json::<Value>()["edited"], true);
-    let res = client
-        .delete(&format!("/api/v1/messages/{}/{mid}", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-proof", &proof)
-        .await;
-    assert_eq!(res.status(), 204);
-
-    // L'admin modère sans preuve.
-    let other = post(&client, &g, "spam", &sha_hex("x")).await;
-    let res = client
-        .delete(&format!("/api/v1/messages/{}/{other}", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .await;
-    assert_eq!(res.status(), 204);
-}
-
-#[tokio::test]
-async fn plaintext_is_refused_everywhere() {
-    let client = client().await;
-    let g = Guild::new(2);
-    let res = client
-        .post("/api/v1/guilds")
-        .json(
-            &json!({ "gid": g.gid, "access": g.access, "admin": g.admin, "state": "Mon serveur" }),
-        )
-        .await;
-    assert_eq!(res.status(), 422);
-    create(&client, &g).await;
-    for body in [
-        "bonjour".to_owned(),
-        format!("bonjour {}", g.seal("x")),
-        "[[BROCOLIS:v1:pas du base64 !]]".to_owned(),
-        "[[BROCOLIS:v1:AAAA]]".to_owned(),
-    ] {
-        let res = client
-            .post(&format!("/api/v1/messages/{}", g.gid))
-            .header("x-alley-access", &g.access)
-            .json(&json!({ "body": body, "owner": sha_hex("p") }))
-            .await;
-        assert_eq!(res.status(), 422, "accepté : {body}");
-    }
-    let res = client
-        .put(&format!("/api/v1/guilds/{}/members/me", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-member", &member(1))
-        .json(&json!({ "profile": "Ada" }))
-        .await;
-    assert_eq!(res.status(), 422);
-    let res = client
-        .put(&format!("/api/v1/guilds/{}/state", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .json(&json!({ "state": "{\"name\":\"en clair\"}", "revision": 1 }))
-        .await;
-    assert_eq!(res.status(), 422);
-}
-
-#[tokio::test]
-async fn without_the_key_a_guild_does_not_exist() {
-    let client = client().await;
-    let g = Guild::new(3);
-    create(&client, &g).await;
-    let other = Guild::new(4);
-    for access in [None, Some(other.access.as_str()), Some("zz")] {
-        let mut req = client.get(&format!("/api/v1/guilds/{}", g.gid));
-        if let Some(a) = access {
-            req = req.header("x-alley-access", a);
-        }
-        assert_eq!(req.await.status(), 404);
-        let mut req = client.get(&format!("/api/v1/messages/{}", g.gid));
-        if let Some(a) = access {
-            req = req.header("x-alley-access", a);
-        }
-        assert_eq!(req.await.status(), 404);
-    }
-    // Le même identifiant ne peut pas être repris.
-    let res = client
-        .post("/api/v1/guilds")
-        .json(&json!({ "gid": g.gid, "access": other.access, "admin": other.admin, "state": other.seal("{}") }))
-        .await;
-    assert_eq!(res.status(), 409);
-}
-
-#[tokio::test]
-async fn the_state_is_admin_only_and_never_overwritten_blindly() {
-    let client = client().await;
-    let g = Guild::new(5);
-    create(&client, &g).await;
-    let path = format!("/api/v1/guilds/{}/state", g.gid);
-    let res = client
-        .put(&path)
-        .header("x-alley-access", &g.access)
-        .json(&json!({ "state": g.seal("{}"), "revision": 1 }))
-        .await;
-    assert_eq!(res.status(), 403);
-    let res = client
-        .put(&path)
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .json(&json!({ "state": g.seal(r#"{"name":"Le QG"}"#), "revision": 1 }))
-        .await;
-    assert_eq!(res.status(), 200, "{}", res.text());
-    assert_eq!(res.json::<Value>()["revision"], 2);
-    // Une modification faite sur une version périmée est refusée.
-    let res = client
-        .put(&path)
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .json(&json!({ "state": g.seal(r#"{"name":"Vieux"}"#), "revision": 1 }))
-        .await;
-    assert_eq!(res.status(), 409);
-    let info: Value = client
-        .get(&format!("/api/v1/guilds/{}", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
+    // Un salon privé : pas dans la liste, mais joignable par son lien.
+    let private: Value = client
+        .post("/api/v1/rooms")
+        .json(&json!({ "name": "Secret", "private": true }))
         .await
         .json();
-    assert_eq!(info["admin"], true);
+    let id = private["id"].as_str().unwrap();
+    assert_eq!(id.len(), 32);
+    let all: Value = client.get("/api/v1/rooms").await.json();
+    assert!(
+        all["rooms"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["name"] != "Secret")
+    );
     assert_eq!(
-        g.open(info["state"].as_str().unwrap()),
-        r#"{"name":"Le QG"}"#
+        client.get(&format!("/api/v1/rooms/{id}")).await.status(),
+        200
+    );
+    assert_eq!(client.get("/api/v1/rooms/inconnu").await.status(), 404);
+
+    for bad in [json!({ "name": "" }), json!({ "name": "x".repeat(41) })] {
+        assert_eq!(client.post("/api/v1/rooms").json(&bad).await.status(), 400);
+    }
+    let stats: Value = client.get("/api/v1/stats").await.json();
+    assert_eq!(stats["messages_stored"], 0);
+    assert_eq!(stats["pseudonyms_known"], 0);
+}
+
+type Ws =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Une vraie application Alley sur un port libre.
+async fn serve() -> u16 {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let mut app = alley::app();
+    app.port(port);
+    app.quiet();
+    tokio::spawn(app.serve());
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    port
+}
+
+async fn connect(port: u16, room: &str, identity: &Identity) -> Ws {
+    let x = crypto::b64url(&identity.public_raw());
+    let url = format!("ws://127.0.0.1:{port}/api/v1/rooms/{room}/live?x={x}");
+    tokio_tungstenite::connect_async(url)
+        .await
+        .expect("connexion")
+        .0
+}
+
+async fn next(ws: &mut Ws) -> Value {
+    loop {
+        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+            .await
+            .expect("un événement à temps")
+            .expect("connexion ouverte")
+            .expect("message");
+        if let Message::Text(text) = msg {
+            return paquets::serde_json::from_str(text.as_str()).unwrap();
+        }
+    }
+}
+
+async fn send(ws: &mut Ws, value: Value) {
+    ws.send(Message::text(value.to_string())).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_room_hands_its_key_over_relays_and_forgets() {
+    let port = serve().await;
+    let http = reqwest_like(port);
+    let room: Value = http("POST", "/api/v1/rooms", Some(json!({ "name": "Café" }))).await;
+    let id = room["id"].as_str().unwrap().to_owned();
+
+    // Ada arrive la première : seule, elle tire la clé du salon.
+    let ada_id = Identity::generate();
+    let mut ada = connect(port, &id, &ada_id).await;
+    let welcome = next(&mut ada).await;
+    assert_eq!(welcome["type"], "welcome");
+    assert!(welcome["peers"].as_array().unwrap().is_empty());
+    let key = crypto::generate_key();
+
+    // Un message avant l'arrivée de Bob : il ne le verra jamais.
+    let before = crypto::seal_token(&key, r#"{"k":"msg","x":"avant"}"#);
+    send(&mut ada, json!({ "type": "relay", "data": before })).await;
+
+    // Bob arrive : Ada apprend sa clé publique et lui remet la clé du salon.
+    let bob_id = Identity::generate();
+    let mut bob = connect(port, &id, &bob_id).await;
+    let welcome = next(&mut bob).await;
+    let ada_conn = welcome["peers"][0]["id"].as_str().unwrap().to_owned();
+    let joined = next(&mut ada).await;
+    assert_eq!(joined["type"], "joined");
+    let bob_conn = joined["id"].as_str().unwrap().to_owned();
+    let blob = ada_id
+        .wrap_group_key(&key, joined["x"].as_str().unwrap())
+        .unwrap();
+    send(
+        &mut ada,
+        json!({ "type": "key", "to": bob_conn, "blob": blob }),
+    )
+    .await;
+    let handed = next(&mut bob).await;
+    assert_eq!(
+        (handed["type"].as_str(), handed["from"].as_str()),
+        (Some("key"), Some(ada_conn.as_str()))
+    );
+    let x_ada = welcome["peers"][0]["x"].as_str().unwrap();
+    assert_eq!(
+        bob_id.unwrap_group_key(handed["blob"].as_str().unwrap(), x_ada),
+        Some(key)
+    );
+
+    // Le clair est refusé ; un jeton passe, avec son expéditeur.
+    send(
+        &mut ada,
+        json!({ "type": "relay", "data": "salut en clair" }),
+    )
+    .await;
+    let token = crypto::seal_token(&key, r#"{"k":"msg","x":"salut"}"#);
+    send(&mut ada, json!({ "type": "relay", "data": token })).await;
+    let got = next(&mut bob).await;
+    assert_eq!(got["type"], "relay");
+    assert_eq!(got["from"], ada_conn);
+    let clear = crypto::open_token(&key, got["data"].as_str().unwrap()).unwrap();
+    assert!(
+        clear.contains("salut") && !clear.contains("avant"),
+        "{clear}"
+    );
+
+    // Une signalisation pour Bob seul.
+    let signal = crypto::seal_token(&key, r#"{"k":"signal"}"#);
+    send(
+        &mut bob,
+        json!({ "type": "relay", "data": signal, "to": ada_conn }),
+    )
+    .await;
+    assert_eq!(next(&mut ada).await["from"], bob_conn);
+
+    // Bob part ; Ada aussi : le salon disparaît avec elle.
+    bob.close(None).await.unwrap();
+    assert_eq!(next(&mut ada).await["type"], "left");
+    ada.close(None).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let gone: Value = http("GET", &format!("/api/v1/rooms/{id}"), None).await;
+    assert_eq!(gone["status"], 404);
+    let stats: Value = http("GET", "/api/v1/stats", None).await;
+    assert_eq!(
+        (stats["rooms"].as_u64(), stats["messages_stored"].as_u64()),
+        (Some(0), Some(0))
     );
 }
 
-#[tokio::test]
-async fn excluding_a_member_rotates_the_key_and_bans_them() {
-    let client = client().await;
-    let g = Guild::new(6);
-    create(&client, &g).await;
-    let (ada, eve) = (member(0xa1), member(0xee));
-    assert_eq!(join(&client, &g, &ada, "Ada").await, 200);
-    assert_eq!(join(&client, &g, &eve, "Ève").await, 200);
-    let new_key = [0x66; 32];
-    let new_access = access_of(&new_key);
-    let rotation = json!({
-        "epoch": 1,
-        "access": new_access,
-        "state": seal(&new_key, "{\"keys\":[\"ancienne\"]}"),
-        "remove": [member_id(&eve)],
-        "shares": [{
-            "member": member_id(&ada),
-            "blob": STANDARD.encode([1u8; 60]),
-            "sender": STANDARD.encode([2u8; 32]),
-        }],
-    });
-    let path = format!("/api/v1/guilds/{}/rotate", g.gid);
-
-    // Seul l'admin renouvelle la clé.
-    let res = client
-        .post(&path)
-        .header("x-alley-access", &g.access)
-        .json(&rotation)
-        .await;
-    assert_eq!(res.status(), 403);
-    // Une clé emballée pour l'exclu est refusée.
-    let mut bad = rotation.clone();
-    bad["shares"][0]["member"] = member_id(&eve).into();
-    let res = client
-        .post(&path)
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .json(&bad)
-        .await;
-    assert_eq!(res.status(), 400);
-    let res = client
-        .post(&path)
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .json(&rotation)
-        .await;
-    assert_eq!(res.status(), 200, "{}", res.text());
-    assert_eq!(res.json::<Value>()["epoch"], 1);
-
-    // L'ancienne clé ne mène plus nulle part.
-    let res = client
-        .get(&format!("/api/v1/guilds/{}", g.gid))
-        .header("x-alley-access", &g.access)
-        .await;
-    assert_eq!(res.status(), 404);
-    // Ada retrouve la nouvelle, emballée pour elle (sans jeton d'accès).
-    let res = client
-        .get(&format!("/api/v1/guilds/{}/keys", g.gid))
-        .header("x-alley-member", &ada)
-        .await;
-    assert_eq!(res.status(), 200, "{}", res.text());
-    let share: Value = res.json();
-    assert_eq!(share["epoch"], 1);
-    assert_eq!(share["blob"], STANDARD.encode([1u8; 60]));
-    // Ève, exclue, n'a rien, et ne peut pas revenir même avec la nouvelle clé.
-    let res = client
-        .get(&format!("/api/v1/guilds/{}/keys", g.gid))
-        .header("x-alley-member", &eve)
-        .await;
-    assert_eq!(res.status(), 403);
-    let rotated = Guild {
-        key: new_key,
-        gid: g.gid.clone(),
-        access: new_access,
-        admin: g.admin.clone(),
-    };
-    assert_eq!(join(&client, &rotated, &eve, "Ève").await, 403);
-    let info: Value = client
-        .get(&format!("/api/v1/guilds/{}", g.gid))
-        .header("x-alley-access", &rotated.access)
-        .await
-        .json();
-    let ids: Vec<&str> = info["members"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| m["id"].as_str().unwrap())
-        .collect();
-    assert_eq!(ids, [member_id(&ada)]);
-    // Rejouer la même rotation ne passe pas.
-    let res = client
-        .post(&path)
-        .header("x-alley-access", &rotated.access)
-        .header("x-alley-admin", &g.admin)
-        .json(&rotation)
-        .await;
-    assert_eq!(res.status(), 409);
-}
-
-#[tokio::test]
-async fn history_is_paged_from_the_newest() {
-    let client = client().await;
-    let g = Guild::new(7);
-    create(&client, &g).await;
-    for i in 0..7 {
-        post(&client, &g, &format!("message {i}"), "p").await;
+/// Une requête HTTP minimale (sans dépendance de plus) : le corps JSON, ou
+/// `{"status": …}` pour une erreur.
+fn reqwest_like(
+    port: u16,
+) -> impl Fn(&str, &str, Option<Value>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Value>>>
+{
+    move |method, path, body| {
+        let (method, path) = (method.to_owned(), path.to_owned());
+        Box::pin(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .unwrap();
+            let body = body.map(|b| b.to_string()).unwrap_or_default();
+            let request = format!(
+                "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(request.as_bytes()).await.unwrap();
+            let mut raw = String::new();
+            stream.read_to_string(&mut raw).await.unwrap();
+            let status: u16 = raw
+                .split(' ')
+                .nth(1)
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let body = raw.split("\r\n\r\n").nth(1).unwrap_or_default();
+            if status >= 400 {
+                return json!({ "status": status });
+            }
+            paquets::serde_json::from_str(body).unwrap_or(Value::Null)
+        })
     }
-    let page: Value = client
-        .get(&format!("/api/v1/messages/{}?limit=3", g.gid))
-        .header("x-alley-access", &g.access)
-        .await
-        .json();
-    let texts: Vec<String> = page["messages"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|m| g.open(m["body"].as_str().unwrap()))
-        .collect();
-    assert_eq!(texts, ["message 4", "message 5", "message 6"]);
-    assert_eq!(page["more"], true);
-    let oldest = page["messages"][0]["id"].as_i64().unwrap();
-    let older: Value = client
-        .get(&format!(
-            "/api/v1/messages/{}?limit=3&before={oldest}",
-            g.gid
-        ))
-        .header("x-alley-access", &g.access)
-        .await
-        .json();
-    assert_eq!(
-        g.open(older["messages"][2]["body"].as_str().unwrap()),
-        "message 3"
-    );
 }
 
 #[tokio::test]
-async fn leaving_and_deleting() {
-    let client = client().await;
-    let g = Guild::new(8);
-    create(&client, &g).await;
-    assert_eq!(join(&client, &g, &member(1), "Ada").await, 200);
-    let res = client
-        .delete(&format!("/api/v1/guilds/{}/members/me", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-member", &member(1))
-        .await;
-    assert_eq!(res.status(), 204);
-    let res = client
-        .delete(&format!("/api/v1/guilds/{}", g.gid))
-        .header("x-alley-access", &g.access)
-        .await;
-    assert_eq!(res.status(), 403);
-    let res = client
-        .delete(&format!("/api/v1/guilds/{}", g.gid))
-        .header("x-alley-access", &g.access)
-        .header("x-alley-admin", &g.admin)
-        .await;
-    assert_eq!(res.status(), 204);
-    let res = client
-        .get(&format!("/api/v1/guilds/{}", g.gid))
-        .header("x-alley-access", &g.access)
-        .await;
-    assert_eq!(res.status(), 404);
+async fn an_unknown_room_refuses_the_connection() {
+    let port = serve().await;
+    let mut ws = connect(port, "inconnu", &Identity::generate()).await;
+    let closed = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        .await
+        .unwrap();
+    match closed {
+        Some(Ok(Message::Close(Some(frame)))) => assert_eq!(u16::from(frame.code), 4404),
+        other => panic!("fermeture attendue, reçu {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -458,13 +264,10 @@ async fn github_pages_may_call_the_api_and_http_goes_to_https() {
     let client = client().await;
     // Le pré-vol CORS de la version GitHub Pages.
     let res = client
-        .request(paquets::vitesse::Method::OPTIONS, "/api/v1/guilds")
+        .request(paquets::vitesse::Method::OPTIONS, "/api/v1/rooms")
         .header("origin", "https://maxlestage.github.io")
         .header("access-control-request-method", "POST")
-        .header(
-            "access-control-request-headers",
-            "content-type,x-alley-access",
-        )
+        .header("access-control-request-headers", "content-type")
         .await;
     assert!(res.status().as_u16() < 300, "{}", res.status());
     assert_eq!(
@@ -475,25 +278,23 @@ async fn github_pages_may_call_the_api_and_http_goes_to_https() {
         .header("access-control-allow-headers")
         .unwrap_or_default()
         .to_lowercase();
-    assert!(allowed.contains("x-alley-access"), "{allowed}");
+    assert!(allowed.contains("content-type"), "{allowed}");
     // Et l'écriture elle-même, venue de ce site.
-    let g = Guild::new(9);
     let res = client
-        .post("/api/v1/guilds")
+        .post("/api/v1/rooms")
         .header("origin", "https://maxlestage.github.io")
         .header("sec-fetch-site", "cross-site")
         .header("sec-fetch-mode", "cors")
-        .json(&json!({ "gid": g.gid, "access": g.access, "admin": g.admin, "state": g.seal("{}") }))
+        .json(&json!({ "name": "depuis Pages" }))
         .await;
     assert_eq!(res.status(), 201, "{}", res.text());
     // Un autre site n'écrit pas.
-    let g = Guild::new(10);
     let res = client
-        .post("/api/v1/guilds")
+        .post("/api/v1/rooms")
         .header("origin", "https://evil.example")
         .header("sec-fetch-site", "cross-site")
         .header("sec-fetch-mode", "cors")
-        .json(&json!({ "gid": g.gid, "access": g.access, "admin": g.admin, "state": g.seal("{}") }))
+        .json(&json!({ "name": "pirate" }))
         .await;
     assert_eq!(res.status(), 403);
     // Derrière le routeur de Heroku, le HTTP est renvoyé vers HTTPS.
@@ -565,7 +366,7 @@ async fn the_site_and_the_installable_app_are_served() {
     let ice: Value = client.get("/api/v1/ice").await.json();
     assert!(!ice["iceServers"].as_array().unwrap().is_empty());
     let stats: Value = client.get("/api/v1/stats").await.json();
-    assert_eq!(stats["plaintext_stored"], 0);
+    assert_eq!(stats["messages_stored"], 0);
 }
 
 #[tokio::test]
