@@ -6,14 +6,14 @@
 //! Le service worker garde l'application (page, scripts, styles, icônes) pour
 //! qu'elle s'ouvre même sans réseau, et laisse toujours passer l'API au réseau.
 
-use std::sync::OnceLock;
-
 use paquets::active::pwa::{Manifest, ServiceWorker, version};
 use paquets::prelude::*;
 use paquets::vitesse::{Response, header};
 
+use crate::Site;
+
 /// `(chemin, type, contenu)` de chaque fichier servi sous `/assets/`.
-const FILES: &[(&str, &str, &[u8])] = &[
+pub const FILES: &[(&str, &str, &[u8])] = &[
     (
         "/assets/site.css",
         "text/css; charset=utf-8",
@@ -38,6 +38,11 @@ const FILES: &[(&str, &str, &[u8])] = &[
         "/assets/brocolis.js",
         "text/javascript; charset=utf-8",
         include_bytes!("../web/brocolis.js"),
+    ),
+    (
+        "/assets/call.js",
+        "text/javascript; charset=utf-8",
+        include_bytes!("../web/call.js"),
     ),
     (
         "/assets/favicon.svg",
@@ -69,49 +74,56 @@ const FILES: &[(&str, &str, &[u8])] = &[
 pub const MANIFEST_URL: &str = "/manifest.webmanifest";
 pub const WORKER_URL: &str = "/sw.js";
 /// La page qu'ouvre l'application installée.
-pub const START_URL: &str = "/app";
+pub const START_URL: &str = "/app/";
 pub const THEME_COLOR: &str = "#16131f";
 
 /// Le manifeste : nom, icônes, couleurs, plein écran.
-pub fn manifest() -> Manifest {
+pub fn manifest(site: &Site) -> Manifest {
     Manifest::new("Alley — messagerie chiffrée")
         .short_name("Alley")
-        .description("Serveurs, salons et messages chiffrés de bout en bout.")
-        .id(START_URL)
-        .start_url(START_URL)
-        .scope("/")
+        .description("Serveurs, salons, messages et appels chiffrés de bout en bout.")
+        .id(site.url(START_URL))
+        .start_url(site.url(START_URL))
+        .scope(site.url("/"))
         .display("standalone")
         .theme_color(THEME_COLOR)
         .background_color(THEME_COLOR)
         .lang("fr")
         .categories(["social", "communication", "productivity"])
-        .icon("/assets/icon-192.png", "192x192", "image/png")
-        .icon("/assets/icon-512.png", "512x512", "image/png")
-        .maskable_icon("/assets/icon-maskable-512.png", "512x512", "image/png")
+        .icon(site.url("/assets/icon-192.png"), "192x192", "image/png")
+        .icon(site.url("/assets/icon-512.png"), "512x512", "image/png")
+        .maskable_icon(
+            site.url("/assets/icon-maskable-512.png"),
+            "512x512",
+            "image/png",
+        )
 }
 
 /// La version de l'application : change dès qu'un fichier change, pour que
 /// le service worker remplace l'ancien cache.
-pub fn build_version() -> &'static str {
-    static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION.get_or_init(|| {
-        let mut parts: Vec<&[u8]> = FILES.iter().map(|(_, _, bytes)| *bytes).collect();
-        parts.push(env!("CARGO_PKG_VERSION").as_bytes());
-        version(parts)
-    })
+pub fn build_version(site: &Site) -> String {
+    let mut parts: Vec<&[u8]> = FILES.iter().map(|(_, _, bytes)| *bytes).collect();
+    parts.push(env!("CARGO_PKG_VERSION").as_bytes());
+    parts.push(site.base.as_bytes());
+    parts.push(site.api.as_bytes());
+    version(parts)
 }
 
-/// Le script du service worker.
-pub fn worker() -> String {
-    let precache = FILES.iter().map(|(path, _, _)| *path).chain(["/"]);
-    ServiceWorker::new("alley", build_version())
+/// Le script du service worker : l'app s'ouvre hors ligne, l'API passe
+/// toujours par le réseau.
+pub fn worker(site: &Site) -> String {
+    let precache = FILES
+        .iter()
+        .map(|(path, _, _)| site.url(path))
+        .chain([site.url("/")]);
+    ServiceWorker::new("alley", build_version(site))
         .precache(precache)
-        .offline_page(START_URL)
-        .network_only("/api/")
+        .offline_page(site.url(START_URL))
+        .network_only(site.url("/api/"))
         .to_js()
 }
 
-pub fn routes(app: &mut App) {
+pub fn routes(app: &mut App, site: &Site) {
     for (path, kind, bytes) in FILES {
         app.get(path, move |_| async move {
             Response::new()
@@ -120,7 +132,7 @@ pub fn routes(app: &mut App) {
                 .send(*bytes)
         });
     }
-    let manifest = manifest().to_json();
+    let manifest = manifest(site).to_json();
     app.get(MANIFEST_URL, move |_| {
         let manifest = manifest.clone();
         async move {
@@ -130,7 +142,7 @@ pub fn routes(app: &mut App) {
                 .send(manifest)
         }
     });
-    let worker = worker();
+    let worker = worker(site);
     app.get(WORKER_URL, move |_| {
         let worker = worker.clone();
         async move {

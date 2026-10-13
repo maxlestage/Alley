@@ -1,62 +1,84 @@
-//! Les pages, rendues par le serveur avec Active (SEO complet) :
+//! Les pages, rendues avec Active (SEO complet) :
 //!
 //! - `/` : la vitrine qui présente Alley ;
-//! - `/app` : l'application elle-même (le script `app.js` la construit) ;
+//! - `/app/` : l'application elle-même (le script `app.js` la construit) ;
 //! - toute autre adresse : une page 404.
+//!
+//! Les mêmes pages sont servies par le serveur et exportées pour GitHub Pages
+//! ([`crate::export`]) : seules changent les adresses ([`Site`]).
 
 use paquets::prelude::*;
 use paquets::vitesse::Response;
 
+use crate::Site;
 use crate::assets::{MANIFEST_URL, THEME_COLOR};
 
 const DESCRIPTION: &str = "Alley, l'équivalent de Discord chiffré de bout en bout : serveurs, \
-salons, messages et images en temps réel, illisibles pour le serveur. Sur iPhone, Android, \
-Windows, macOS et Linux.";
+salons, messages, photos, vocaux et appels vidéo, illisibles pour le serveur. Sur iPhone, \
+Android, Windows, macOS et Linux.";
 
 /// Les balises qui rendent la page installable et belle en plein écran,
-/// notamment sur iPhone et iPad (barre d'état, encoche, icône d'accueil).
-fn head_tags() -> String {
+/// notamment sur iPhone et iPad (barre d'état, encoche, icône d'accueil), et
+/// qui disent au script où sont le site et l'API.
+fn head_tags(site: &Site) -> String {
+    let attr = |s: &str| {
+        s.replace('&', "&amp;")
+            .replace('"', "&quot;")
+            .replace('<', "&lt;")
+    };
     format!(
-        r#"<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/><link rel="manifest" href="{MANIFEST_URL}"/><meta name="theme-color" content="{THEME_COLOR}"/><meta name="color-scheme" content="dark light"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Alley"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><meta name="format-detection" content="telephone=no"/><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"/><link rel="apple-touch-icon" href="/assets/apple-touch-icon.png"/>"#
+        r#"<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/><link rel="manifest" href="{manifest}"/><meta name="theme-color" content="{THEME_COLOR}"/><meta name="color-scheme" content="dark light"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Alley"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><meta name="format-detection" content="telephone=no"/><link rel="icon" href="{favicon}" type="image/svg+xml"/><link rel="apple-touch-icon" href="{touch}"/><meta name="alley-base" content="{base}"/><meta name="alley-api" content="{api}"/>"#,
+        manifest = attr(&site.url(MANIFEST_URL)),
+        favicon = attr(&site.url("/assets/favicon.svg")),
+        touch = attr(&site.url("/assets/apple-touch-icon.png")),
+        base = attr(&site.base),
+        api = attr(&site.api),
     )
 }
 
-fn seo(path: &str) -> Seo {
+fn seo(site: &Site, path: &str) -> Seo {
     Seo::new()
-        .canonical(path.to_owned())
-        .image("/assets/icon-512.png")
+        .canonical(site.url(path))
+        .image(site.url("/assets/icon-512.png"))
         .site_name("Alley")
         .locale("fr_FR")
 }
 
-/// `/` : la vitrine.
-async fn home(_req: Request) -> Page {
+fn script(site: &Site, name: &str) -> String {
+    format!(
+        r#"<script type="module" src="{}"></script>"#,
+        site.url(&format!("/assets/{name}"))
+    )
+}
+
+/// La vitrine.
+pub fn home(site: &Site) -> Page {
     Page::new("Alley — l'équivalent de Discord, chiffré de bout en bout")
         .lang("fr")
         .description(DESCRIPTION)
-        .seo(seo("/").json_ld(
+        .seo(seo(site, "/").json_ld(
             r#"{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Alley","applicationCategory":"CommunicationApplication","operatingSystem":"iOS, iPadOS, Android, Windows, macOS, Linux, ChromeOS","offers":{"@type":"Offer","price":"0","priceCurrency":"EUR"}}"#,
         ))
         .plain()
-        .head(head_tags())
-        .stylesheet("/assets/site.css")
-        .head(r#"<script type="module" src="/assets/site.js"></script>"#)
-        .body(site_header())
-        .body(hero())
+        .head(head_tags(site))
+        .stylesheet(site.url("/assets/site.css"))
+        .head(script(site, "site.js"))
+        .body(site_header(site))
+        .body(hero(site))
         .body(features())
         .body(security())
         .body(platforms())
         .body(faq())
-        .body(site_footer())
+        .body(site_footer(site))
 }
 
-fn logo() -> Element {
+fn logo(site: &Site) -> Element {
     a().class("logo")
-        .href("/")
+        .href(site.url("/"))
         .attr("aria-label", "Alley, accueil")
         .child(
             img()
-                .attr("src", "/assets/favicon.svg")
+                .attr("src", site.url("/assets/favicon.svg"))
                 .attr("alt", "")
                 .attr("width", "28")
                 .attr("height", "28"),
@@ -64,17 +86,21 @@ fn logo() -> Element {
         .child(span().text("Alley"))
 }
 
-fn site_header() -> Element {
-    header().class("top").child(logo()).child(
+fn site_header(site: &Site) -> Element {
+    header().class("top").child(logo(site)).child(
         nav()
             .child(a().href("#fonctionnalites").text("Fonctionnalités"))
             .child(a().href("#securite").text("Sécurité"))
             .child(a().href("#installer").text("Installer"))
-            .child(a().class("button small").href("/app").text("Ouvrir Alley")),
+            .child(
+                a().class("button small")
+                    .href(site.url("/app/"))
+                    .text("Ouvrir Alley"),
+            ),
     )
 }
 
-fn hero() -> Element {
+fn hero(site: &Site) -> Element {
     section()
         .class("hero")
         .child(
@@ -86,17 +112,17 @@ fn hero() -> Element {
                 )
                 .child(h1().text("Vos communautés. Vos messages. Personne d'autre."))
                 .child(p().class("lead").text(
-                    "Alley, ce sont des serveurs, des salons et des discussions en temps réel, \
-                     comme sur Discord. Sauf que chaque message, chaque nom de salon, chaque \
-                     pseudo et chaque image est chiffré sur votre appareil avant de partir : \
-                     le serveur ne voit que des jetons illisibles.",
+                    "Alley, ce sont des serveurs, des salons, des discussions et des appels en \
+                     temps réel, comme sur Discord. Sauf que tout est chiffré sur votre appareil \
+                     avant de partir — même qui écrit, où et quand : le serveur ne voit que des \
+                     jetons illisibles.",
                 ))
                 .child(
                     div()
                         .class("cta")
                         .child(
                             a().class("button")
-                                .href("/app#nouveau")
+                                .href(site.url("/app/#nouveau"))
                                 .text("Créer mon serveur"),
                         )
                         .child(
@@ -143,7 +169,7 @@ fn hero_demo() -> Element {
                     "#7c5cff",
                     "On se retrouve à 20 h pour la session ?",
                 ))
-                .child(bubble("Malo", "#22d3a6", "Ok ! Je ramène la carte 🗺️"))
+                .child(bubble("Malo", "#22d3a6", "Ok ! Je lance l'appel vidéo 🎥"))
                 .child(bubble(
                     "Inès",
                     "#7c5cff",
@@ -154,9 +180,9 @@ fn hero_demo() -> Element {
             div()
                 .class("pane server")
                 .child(div().class("pane-title").text("ce que voit le serveur"))
-                .child(cipher("[[BROCOLIS:v1:q9Xw3J0+Lr2c…Pz8=]]"))
-                .child(cipher("[[BROCOLIS:v1:7HfK1aQe9mZ0…tY4=]]"))
-                .child(cipher("[[BROCOLIS:v1:Wm2Lr8sB1cXn…Qa0=]]")),
+                .child(cipher("#4182 · [[BROCOLIS:v1:q9Xw3J0+Lr2c…Pz8=]]"))
+                .child(cipher("#4183 · [[BROCOLIS:v1:7HfK1aQe9mZ0…tY4=]]"))
+                .child(cipher("#4184 · [[BROCOLIS:v1:Wm2Lr8sB1cXn…Qa0=]]")),
         )
 }
 
@@ -179,12 +205,12 @@ fn features() -> Element {
         .child(
             div()
                 .class("grid")
-                .child(card("🏰", "Serveurs et salons", "Créez autant de serveurs que vous voulez, organisez-les en salons, renommez-les, donnez-leur un sujet."))
+                .child(card("🏰", "Serveurs et salons", "Créez autant de serveurs que vous voulez, organisez-les en salons textuels et vocaux, renommez-les, donnez-leur un sujet."))
+                .child(card("🎙️", "Appels audio et vidéo", "Rejoignez un salon vocal : voix, caméra et partage d'écran, de pair à pair et chiffrés de bout en bout."))
                 .child(card("⚡", "Temps réel", "Les messages arrivent instantanément, avec « en train d'écrire… », la présence en ligne et les badges de non-lus."))
-                .child(card("🖼️", "Images chiffrées", "Envoyez des photos : elles sont réduites puis chiffrées sur votre appareil, comme le texte."))
-                .child(card("💬", "Réponses, modifications", "Répondez à un message, corrigez-le, supprimez-le. Mise en forme **gras**, *italique*, `code` et liens."))
-                .child(card("🔗", "Invitation par lien ou QR", "Un lien suffit pour rejoindre. La clé voyage dans le lien, jamais sur le serveur."))
-                .child(card("🛡️", "Administration", "Le créateur gère les salons et peut modérer. Les autres ne modifient que leurs propres messages.")),
+                .child(card("🖼️", "Photos et vocaux", "Envoyez des photos et des messages vocaux : ils sont chiffrés sur votre appareil, comme le texte."))
+                .child(card("💬", "Réponses, modifications", "Répondez, corrigez, supprimez. Mise en forme en gras, italique, code, citations et liens."))
+                .child(card("🛡️", "Modération réelle", "L'admin peut exclure un membre : la clé du serveur est renouvelée et redistribuée aux autres, l'exclu ne lit plus rien.")),
         )
 }
 
@@ -204,15 +230,16 @@ fn security() -> Element {
                 .class("steps")
                 .child(step("1", "Une clé par serveur", "En créant un serveur, votre appareil tire une clé AES-256 au hasard. Elle ne quitte jamais votre appareil autrement que dans un lien d'invitation."))
                 .child(step("2", "Le lien porte la clé", "La clé est placée après le « # » du lien : cette partie n'est jamais envoyée au serveur par le navigateur. Partagez le lien par un canal de confiance."))
-                .child(step("3", "Tout est chiffré avant de partir", "Messages, images, noms de salons et pseudos deviennent des jetons [[BROCOLIS:v1:…]]. Le serveur refuse tout ce qui n'est pas chiffré."))
-                .child(step("4", "Vérifiez l'empreinte", "Chaque serveur affiche une empreinte (ex. 4BB0-6F8E-4E3A-7715). Comparez-la de vive voix : identique pour tous, personne ne s'est intercalé.")),
+                .child(step("3", "Tout est chiffré, même les métadonnées", "Texte, photos, vocaux, noms, pseudos, mais aussi l'auteur, le salon et l'heure de chaque message : tout part dans un jeton [[BROCOLIS:v1:…]], signé par son auteur."))
+                .child(step("4", "Exclure, c'est changer de clé", "Quand l'admin exclut quelqu'un, une nouvelle clé est tirée et remise à chaque membre restant, chiffrée pour lui seul (X25519, comme l'appairage Brocolis)."))
+                .child(step("5", "Vérifiez l'empreinte", "Chaque serveur affiche une empreinte (ex. 4BB0-6F8E-4E3A-7715). Comparez-la de vive voix : identique pour tous, personne ne s'est intercalé.")),
         )
         .child(
             div()
                 .class("grid tech")
-                .child(card("🥦", "Le protocole Brocolis", "AES-256-GCM au format de la messagerie Brocolis : un jeton Alley se lit dans l'app Brocolis avec la même clé, et inversement."))
-                .child(card("📦", "Un serveur Paquets", "Écrit en Rust avec Paquets : WAF, limites de débit, CSP stricte, HSTS et anti-robots devant chaque requête."))
-                .child(card("🙈", "Ce que voit le serveur", "Des identifiants, des horaires et des jetons. Ni la clé, ni vos messages, ni vos noms. Le jeton d'accès n'est gardé qu'en empreinte SHA-256.")),
+                .child(card("🥦", "Le protocole Brocolis", "AES-256-GCM et jetons de la messagerie Brocolis, clés redistribuées par X25519 + HKDF-SHA256, empreintes identiques à l'app Brocolis."))
+                .child(card("📦", "Un serveur Paquets", "Écrit en Rust avec Paquets : WAF, limites de débit, CSP stricte, HTTPS imposé, HSTS et anti-robots devant chaque requête."))
+                .child(card("🙈", "Ce que voit le serveur", "Des numéros de messages et des jetons. Ni la clé, ni le contenu, ni les noms, ni qui a écrit quoi, dans quel salon ou à quelle heure, ni qui est en ligne.")),
         )
 }
 
@@ -248,7 +275,7 @@ fn platforms() -> Element {
         .child(
             div()
                 .class("grid platforms")
-                .child(platform("ios", "📱", "iPhone et iPad", "Dans Safari, touchez Partager puis « Sur l'écran d'accueil ». Alley s'ouvre en plein écran, comme une app."))
+                .child(platform("ios", "📱", "iPhone et iPad", "Dans Safari, touchez Partager puis « Sur l'écran d'accueil ». Alley s'ouvre en plein écran, comme une app, avec ses notifications."))
                 .child(platform("android", "🤖", "Android", "Dans Chrome, touchez « Installer l'application » (ou ⋮ → Ajouter à l'écran d'accueil)."))
                 .child(platform("windows", "🪟", "Windows", "Dans Edge ou Chrome, cliquez sur l'icône d'installation dans la barre d'adresse. Alley rejoint le menu Démarrer."))
                 .child(platform("macos", "🍎", "macOS", "Dans Safari : Fichier → Ajouter au Dock. Dans Chrome ou Edge : l'icône d'installation de la barre d'adresse."))
@@ -267,42 +294,46 @@ fn faq() -> Element {
         .class("section narrow")
         .child(h2().text("Questions fréquentes"))
         .child(qa("Faut-il créer un compte ?", "Non. Choisissez un pseudo (chiffré, lui aussi) et c'est parti. Vos serveurs et leurs clés sont gardés sur votre appareil."))
-        .child(qa("Que se passe-t-il si je perds le lien d'invitation ?", "Demandez-en un nouveau à un membre du serveur : n'importe quel membre peut le partager depuis l'app. Sans la clé, personne, pas même le serveur, ne peut relire les messages."))
+        .child(qa("Quelqu'un a eu le lien sans y être invité : que faire ?", "L'admin l'exclut, ou renouvelle simplement la clé : chaque membre connu reçoit la nouvelle clé, chiffrée pour lui, et l'ancien lien ne mène plus nulle part."))
+        .child(qa("Que voit exactement le serveur ?", "Qu'un serveur Alley existe, combien il a de membres et de messages, et des jetons chiffrés. Pas les noms, pas le contenu, pas l'auteur, le salon ni l'heure d'un message, pas qui est en ligne. Il voit, comme tout serveur web, les adresses IP qui se connectent : passez par un VPN ou Tor si cela compte pour vous."))
+        .child(qa("Les appels sont-ils chiffrés ?", "Oui : ils passent de pair à pair en WebRTC (DTLS-SRTP), et leur mise en relation est chiffrée avec la clé du serveur, ce qui empêche le serveur de s'intercaler."))
         .child(qa("Comment changer d'appareil ?", "Ouvrez le lien d'invitation du serveur sur le nouvel appareil. Pour garder vos droits d'administrateur, utilisez le lien d'administration, à garder pour vous."))
-        .child(qa("Mes métadonnées sont-elles protégées ?", "Le serveur ne connaît ni les noms ni le contenu, mais il voit quand un message est envoyé, dans quel salon et par quel identifiant de membre (aléatoire). C'est le prix du temps réel."))
         .child(qa("Ça marche hors ligne ?", "L'app s'ouvre sans réseau et affiche vos serveurs ; les messages partent et arrivent dès que la connexion revient."))
 }
 
-fn site_footer() -> Element {
+fn site_footer(site: &Site) -> Element {
     footer()
         .class("bottom")
-        .child(logo())
+        .child(logo(site))
         .child(p().text("Écrit avec Paquets 📦 · chiffré avec Brocolis 🥦"))
         .child(
             nav()
-                .child(a().href("/app").text("Ouvrir l'app"))
-                .child(a().href("/api/v1/stats").text("Ce que voit le serveur")),
+                .child(a().href(site.url("/app/")).text("Ouvrir l'app"))
+                .child(
+                    a().href(format!("{}/api/v1/stats", site.api))
+                        .text("Ce que voit le serveur"),
+                ),
         )
 }
 
-/// `/app` : l'application. Le serveur n'envoie que la coquille ; le script
-/// déchiffre et affiche tout dans le navigateur.
-async fn app_page(req: Request) -> Response {
-    let page = Page::new("Alley")
+/// L'application : seulement la coquille ; le script déchiffre et affiche tout
+/// dans le navigateur.
+pub fn app_shell(site: &Site) -> Page {
+    Page::new("Alley")
         .lang("fr")
         .description(DESCRIPTION)
-        .seo(seo("/app"))
+        .seo(seo(site, "/app/"))
         .plain()
-        .head(head_tags())
-        .stylesheet("/assets/app.css")
-        .head(r#"<script type="module" src="/assets/app.js"></script>"#)
+        .head(head_tags(site))
+        .stylesheet(site.url("/assets/app.css"))
+        .head(script(site, "app.js"))
         .body(
             div()
                 .id("root")
                 .class("boot")
                 .child(
                     img()
-                        .attr("src", "/assets/icon-192.png")
+                        .attr("src", site.url("/assets/icon-192.png"))
                         .attr("alt", "")
                         .attr("width", "72")
                         .attr("height", "72"),
@@ -311,60 +342,101 @@ async fn app_page(req: Request) -> Response {
         )
         .body(
             noscript().text("Alley chiffre vos messages dans le navigateur : activez JavaScript."),
-        );
-    with_websocket(page.into_response(), &req)
+        )
 }
 
-/// La politique de la page autorise `connect-src 'self'`, que les navigateurs
-/// anciens (Safari avant 15.4) n'étendent pas aux WebSocket : on ajoute
-/// explicitement l'adresse `wss://` (et `ws://` en développement) de l'hôte.
-fn with_websocket(res: Response, req: &Request) -> Response {
-    let host = req
-        .host()
-        .filter(|h| {
-            h.bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b))
-        })
-        .map(str::to_owned);
-    let Some(host) = host else {
-        return res;
-    };
-    let Some(csp) = res.get_header("content-security-policy") else {
-        return res;
-    };
-    let csp = csp.replace(
-        "connect-src 'self'",
-        &format!("connect-src 'self' wss://{host} ws://{host}"),
-    );
-    res.header("content-security-policy", csp)
-}
-
-async fn not_found(req: Request) -> Response {
-    if req.path().starts_with("/api/") {
-        return Response::new()
-            .status(404)
-            .json(json!({ "message": "adresse inconnue" }));
-    }
+pub fn not_found(site: &Site) -> Page {
     Page::new("Introuvable — Alley")
         .lang("fr")
         .plain()
-        .head(head_tags())
-        .stylesheet("/assets/site.css")
+        .head(head_tags(site))
+        .stylesheet(site.url("/assets/site.css"))
         .seo(Seo::new().noindex(true))
         .status(404)
-        .body(site_header())
+        .body(site_header(site))
         .body(
             section()
                 .class("hero notfound")
                 .child(h1().text("Cette ruelle ne mène nulle part."))
                 .child(p().class("lead").text("La page demandée n'existe pas."))
-                .child(a().class("button").href("/").text("Retour à l'accueil")),
+                .child(
+                    a().class("button")
+                        .href(site.url("/"))
+                        .text("Retour à l'accueil"),
+                ),
         )
-        .into_response()
 }
 
-pub fn routes(app: &mut App) {
-    app.get("/", home);
-    app.get("/app", app_page);
-    app.fallback(not_found);
+/// La politique de sécurité d'une page, élargie à ce dont l'app a besoin :
+///
+/// - `connect-src` : l'API (une autre origine sur GitHub Pages) et sa
+///   WebSocket (`wss://`) ; certains navigateurs n'étendent pas `'self'` aux
+///   WebSocket ;
+/// - `media-src` : les vocaux déchiffrés (`data:`) et les flux des appels.
+pub fn policy(csp: &str, site: &Site, host: Option<&str>) -> String {
+    let mut connect = vec!["'self'".to_owned()];
+    if let Some(host) = host {
+        connect.push(format!("wss://{host}"));
+        connect.push(format!("ws://{host}"));
+    }
+    if let Some(rest) = site.api.strip_prefix("https://") {
+        connect.push(site.api.clone());
+        connect.push(format!("wss://{rest}"));
+    } else if let Some(rest) = site.api.strip_prefix("http://") {
+        connect.push(site.api.clone());
+        connect.push(format!("ws://{rest}"));
+    }
+    csp.replace(
+        "connect-src 'self'",
+        &format!("connect-src {}", connect.join(" ")),
+    )
+    .replace(
+        "img-src 'self' data: https:",
+        "img-src 'self' data: blob: https:; media-src 'self' data: blob:",
+    )
+}
+
+fn respond(page: Page, site: &Site, req: &Request) -> Response {
+    // Sur le serveur, l'API est ici : sa WebSocket aussi.
+    let host = req
+        .host()
+        .filter(|_| site.api.is_empty())
+        .filter(|h| {
+            h.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-.:[]".contains(&b))
+        })
+        .map(str::to_owned);
+    let res = page.into_response();
+    let Some(csp) = res.get_header("content-security-policy") else {
+        return res;
+    };
+    let csp = policy(csp, site, host.as_deref());
+    res.header("content-security-policy", csp)
+}
+
+/// Les pages, servies pour `site`.
+pub fn routes(app: &mut App, site: &Site) {
+    let s = site.clone();
+    app.get("/", move |req: Request| {
+        let s = s.clone();
+        async move { respond(home(&s), &s, &req) }
+    });
+    // `/app` y mène aussi (Vitesse ignore la barre finale).
+    let s = site.clone();
+    app.get("/app/", move |req: Request| {
+        let s = s.clone();
+        async move { respond(app_shell(&s), &s, &req) }
+    });
+    let s = site.clone();
+    app.fallback(move |req: Request| {
+        let s = s.clone();
+        async move {
+            if req.path().starts_with("/api/") {
+                return Response::new()
+                    .status(404)
+                    .json(json!({ "message": "adresse inconnue" }));
+            }
+            respond(not_found(&s), &s, &req)
+        }
+    });
 }

@@ -35,6 +35,12 @@ const MIN_COMBINED: usize = 12 + 16;
 
 /// Taille maximale d'un jeton de nom (serveur, salon, pseudo).
 pub const MAX_NAME_TOKEN: usize = 1024;
+/// Taille maximale d'un profil chiffré (pseudo et clés publiques).
+pub const MAX_PROFILE_TOKEN: usize = 4096;
+/// Taille maximale de l'état chiffré d'un serveur (nom, salons, anciennes clés).
+pub const MAX_STATE_TOKEN: usize = 256 * 1024;
+/// Taille maximale d'un message relayé en direct (présence, signalisation des appels).
+pub const MAX_RELAY_TOKEN: usize = 64 * 1024;
 /// Taille maximale d'un message : du texte, ou une image chiffrée.
 pub const MAX_MESSAGE_TOKEN: usize = 6 * 1024 * 1024;
 
@@ -56,6 +62,18 @@ pub fn is_token(text: &str, max: usize) -> bool {
         Err(_) => false,
     }
 }
+
+/// Du base64 standard qui décode en exactement `len` octets (une clé
+/// publique X25519, une clé emballée).
+pub fn is_b64_len(text: &str, len: usize) -> bool {
+    text.len() <= len * 2 && STANDARD.decode(text).is_ok_and(|b| b.len() == len)
+}
+
+/// Une clé de serveur emballée pour un membre (format Brocolis
+/// `wrapGroupKey`) : nonce (12) + clé (32) + tag (16).
+pub const WRAPPED_KEY_LEN: usize = 12 + 32 + 16;
+/// Une clé publique X25519 brute.
+pub const PUBLIC_KEY_LEN: usize = 32;
 
 /// Un identifiant ou un secret : `len` caractères hexadécimaux minuscules.
 pub fn is_hex(text: &str, len: usize) -> bool {
@@ -129,6 +147,15 @@ mod tests {
         assert_eq!(d.len(), 64);
         assert_eq!(member_id("secret"), d[..16]);
         assert!(same(&d, &digest("secret")));
+        assert!(is_b64_len(
+            "pOCSkrZRwni5dyxWn1+puxPZBrRqtoyd+dwrRAn4ogk=",
+            PUBLIC_KEY_LEN
+        ));
+        assert!(!is_b64_len(
+            "pOCSkrZRwni5dyxWn1+puxPZBrRqtoyd+dwrRAn4ogk=",
+            WRAPPED_KEY_LEN
+        ));
+        assert!(!is_b64_len("pas du base64", PUBLIC_KEY_LEN));
         assert!(!same(&d, &digest("autre")));
     }
 }
