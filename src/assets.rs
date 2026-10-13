@@ -3,7 +3,7 @@
 //! systèmes : le manifeste d'application web et le service worker, construits
 //! avec le module `pwa` d'Active.
 //!
-//! Le service worker garde l'application (page, scripts, styles, icônes) pour
+//! Le service worker garde l'application (page, WebAssembly, styles, icônes) pour
 //! qu'elle s'ouvre même sans réseau, et laisse toujours passer l'API au réseau.
 
 use paquets::active::pwa::{Manifest, ServiceWorker, version};
@@ -24,25 +24,17 @@ pub const FILES: &[(&str, &str, &[u8])] = &[
         "text/css; charset=utf-8",
         include_bytes!("../web/app.css"),
     ),
+    // Le navigateur, en Rust compilé en WebAssembly (`client/`), et la colle
+    // générée par wasm-bindgen pour le charger.
     (
-        "/assets/site.js",
+        WASM_JS,
         "text/javascript; charset=utf-8",
-        include_bytes!("../web/site.js"),
+        include_bytes!(concat!(env!("OUT_DIR"), "/alley_web.js")),
     ),
     (
-        "/assets/app.js",
-        "text/javascript; charset=utf-8",
-        include_bytes!("../web/app.js"),
-    ),
-    (
-        "/assets/brocolis.js",
-        "text/javascript; charset=utf-8",
-        include_bytes!("../web/brocolis.js"),
-    ),
-    (
-        "/assets/call.js",
-        "text/javascript; charset=utf-8",
-        include_bytes!("../web/call.js"),
+        WASM,
+        "application/wasm",
+        include_bytes!(concat!(env!("OUT_DIR"), "/alley_web_bg.wasm")),
     ),
     (
         "/assets/favicon.svg",
@@ -70,6 +62,17 @@ pub const FILES: &[(&str, &str, &[u8])] = &[
         include_bytes!("../web/icons/apple-touch-icon.png"),
     ),
 ];
+
+/// La colle de wasm-bindgen et le module WebAssembly du navigateur.
+pub const WASM_JS: &str = "/assets/alley_web.js";
+pub const WASM: &str = "/assets/alley_web_bg.wasm";
+
+/// Le navigateur a-t-il été compilé (`scripts/web.sh`) ?
+pub fn has_wasm() -> bool {
+    FILES
+        .iter()
+        .any(|(path, _, bytes)| *path == WASM && !bytes.is_empty())
+}
 
 pub const MANIFEST_URL: &str = "/manifest.webmanifest";
 pub const WORKER_URL: &str = "/sw.js";

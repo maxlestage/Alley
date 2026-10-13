@@ -1,0 +1,116 @@
+[package]
+name = "alley-web"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Le navigateur d'Alley, en Rust compilé en WebAssembly : chiffrement Brocolis, application, appels WebRTC, vitrine"
+publish = false
+
+# Une seule crate pour les deux côtés : compilée en WebAssembly, c'est tout le
+# code du navigateur ; compilée normalement, son module `crypto` sert aux tests
+# du serveur (exactement le même chiffrement).
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+sha2 = "0.10"
+p256 = { version = "0.13", features = ["ecdsa"] }
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+wasm-bindgen = "=0.2.129"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+  "AnalyserNode",
+  "AudioContext",
+  "AudioNode",
+  "BaseAudioContext",
+  "BeforeUnloadEvent",
+  "Blob",
+  "BlobEvent",
+  "BlobPropertyBag",
+  "CanvasRenderingContext2d",
+  "CloseEvent",
+  "CssStyleDeclaration",
+  "DisplayMediaStreamConstraints",
+  "Document",
+  "DomTokenList",
+  "Element",
+  "Event",
+  "EventTarget",
+  "File",
+  "FileList",
+  "FileReader",
+  "Headers",
+  "History",
+  "HtmlAnchorElement",
+  "HtmlAudioElement",
+  "HtmlButtonElement",
+  "HtmlCanvasElement",
+  "HtmlCollection",
+  "HtmlDialogElement",
+  "HtmlElement",
+  "HtmlImageElement",
+  "HtmlInputElement",
+  "HtmlMediaElement",
+  "HtmlMetaElement",
+  "HtmlTextAreaElement",
+  "HtmlVideoElement",
+  "KeyboardEvent",
+  "Location",
+  "MediaDevices",
+  "MediaQueryList",
+  "MediaRecorder",
+  "MediaRecorderOptions",
+  "MediaStream",
+  "MediaStreamAudioSourceNode",
+  "MediaStreamConstraints",
+  "MediaStreamTrack",
+  "MessageEvent",
+  "Navigator",
+  "Node",
+  "NodeList",
+  "Notification",
+  "NotificationOptions",
+  "NotificationPermission",
+  "RequestInit",
+  "RequestMode",
+  "RequestCache",
+  "Response",
+  "RtcConfiguration",
+  "RtcIceCandidate",
+  "RtcIceCandidateInit",
+  "RtcIceServer",
+  "RtcOfferOptions",
+  "RtcPeerConnection",
+  "RtcPeerConnectionIceEvent",
+  "RtcPeerConnectionState",
+  "RtcRtpReceiver",
+  "RtcRtpSender",
+  "RtcRtpTransceiver",
+  "RtcRtpTransceiverDirection",
+  "RtcRtpTransceiverInit",
+  "RtcSdpType",
+  "RtcSessionDescription",
+  "RtcSessionDescriptionInit",
+  "RtcSignalingState",
+  "RtcTrackEvent",
+  "ServiceWorkerContainer",
+  "ServiceWorkerRegistration",
+  "RegistrationOptions",
+  "Storage",
+  "VisibilityState",
+  "VisualViewport",
+  "WebSocket",
+  "Window",
+] }
+
+[dev-dependencies]

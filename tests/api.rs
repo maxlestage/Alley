@@ -1,8 +1,8 @@
 //! L'API de bout en bout, avec la même application que la production
-//! (`alley::app().test()`), et des jetons chiffrés comme le navigateur.
+//! (`alley::app().test()`), et des jetons chiffrés par le code même du
+//! navigateur (`alley_web::crypto`, compilé ici sans WebAssembly).
 
-use aes_gcm::aead::{Aead, KeyInit};
-use aes_gcm::{Aes256Gcm, Nonce};
+use alley_web::crypto;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use paquets::serde_json::{Value, json};
@@ -50,16 +50,7 @@ impl Guild {
     }
 
     fn open(&self, token: &str) -> String {
-        let inner = token
-            .strip_prefix("[[BROCOLIS:v1:")
-            .and_then(|t| t.strip_suffix("]]"))
-            .unwrap();
-        let combined = STANDARD.decode(inner).unwrap();
-        let cipher = Aes256Gcm::new_from_slice(&self.key).unwrap();
-        let plain = cipher
-            .decrypt(Nonce::from_slice(&combined[..12]), &combined[12..])
-            .unwrap();
-        String::from_utf8(plain).unwrap()
+        crypto::open_token(&self.key, token).expect("jeton de ce serveur")
     }
 }
 
@@ -67,20 +58,9 @@ fn access_of(key: &[u8; 32]) -> String {
     hex(&sha(&[b"alley-access-v1", key]))
 }
 
+/// Un jeton `[[BROCOLIS:v1:…]]`, chiffré par le code même du navigateur.
 fn seal(key: &[u8; 32], text: &str) -> String {
-    // Un nonce différent par texte, pour des tests déterministes.
-    let n = text
-        .bytes()
-        .fold(7u8, |a, b| a.wrapping_mul(31).wrapping_add(b));
-    let nonce = [n; 12];
-    let cipher = Aes256Gcm::new_from_slice(key).unwrap();
-    let mut combined = nonce.to_vec();
-    combined.extend(
-        cipher
-            .encrypt(Nonce::from_slice(&nonce), text.as_bytes())
-            .unwrap(),
-    );
-    format!("[[BROCOLIS:v1:{}]]", STANDARD.encode(combined))
+    crypto::seal_token(key, text)
 }
 
 fn member(n: u8) -> String {
@@ -551,7 +531,16 @@ async fn the_site_and_the_installable_app_are_served() {
     assert!(csp.contains("media-src 'self' data: blob:"), "{csp}");
     let permissions = app.header("permissions-policy").unwrap_or_default();
     assert!(permissions.contains("microphone=(self)") && permissions.contains("camera=(self)"));
-    assert!(app.text().contains("/assets/app.js"));
+    let shell = app.text();
+    assert!(
+        shell.contains(r#"import init from "/assets/alley_web.js""#),
+        "{shell}"
+    );
+    assert!(shell.contains(r#"<meta name="alley-page" content="app"/>"#));
+    assert!(
+        !shell.contains("app.js"),
+        "plus de JavaScript écrit à la main"
+    );
     assert_eq!(client.get("/app").await.status(), 200);
 
     let manifest: Value = client.get("/manifest.webmanifest").await.json();
@@ -561,12 +550,11 @@ async fn the_site_and_the_installable_app_are_served() {
 
     let worker = client.get("/sw.js").await.text();
     assert!(worker.contains(r#"const NETWORK_ONLY = ["/api/"];"#));
-    assert!(worker.contains("/assets/call.js"));
+    assert!(worker.contains("/assets/alley_web_bg.wasm"));
 
     for asset in [
-        "/assets/app.js",
-        "/assets/call.js",
-        "/assets/brocolis.js",
+        "/assets/alley_web.js",
+        "/assets/alley_web_bg.wasm",
         "/assets/app.css",
         "/assets/icon-192.png",
     ] {
@@ -592,13 +580,13 @@ async fn the_github_pages_export_is_complete() {
     let app = read("app/index.html");
     assert!(app.contains(r#"<meta http-equiv="Content-Security-Policy""#));
     assert!(app.contains("connect-src 'self' https://alley.example wss://alley.example"));
-    assert!(app.contains(r#"src="/Alley/assets/app.js""#));
+    assert!(app.contains(r#"import init from "/Alley/assets/alley_web.js""#));
     assert!(app.contains(r#"<meta name="alley-api" content="https://alley.example"/>"#));
     assert!(read("index.html").contains(r#"href="/Alley/app/""#));
     assert!(read("404.html").contains("nulle part"));
     let manifest: Value = paquets::serde_json::from_str(&read("manifest.webmanifest")).unwrap();
     assert_eq!(manifest["start_url"], "/Alley/app/");
-    assert!(read("sw.js").contains("/Alley/assets/call.js"));
+    assert!(read("sw.js").contains("/Alley/assets/alley_web_bg.wasm"));
     assert!(dir.join("assets/icon-512.png").exists());
     assert!(dir.join(".nojekyll").exists());
     std::fs::remove_dir_all(&dir).unwrap();

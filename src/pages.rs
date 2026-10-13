@@ -1,7 +1,8 @@
 //! Les pages, rendues avec Active (SEO complet) :
 //!
 //! - `/` : la vitrine qui présente Alley ;
-//! - `/app/` : l'application elle-même (le script `app.js` la construit) ;
+//! - `/app/` : l'application elle-même (construite par le navigateur, en Rust
+//!   compilé en WebAssembly) ;
 //! - toute autre adresse : une page 404.
 //!
 //! Les mêmes pages sont servies par le serveur et exportées pour GitHub Pages
@@ -11,7 +12,7 @@ use paquets::prelude::*;
 use paquets::vitesse::Response;
 
 use crate::Site;
-use crate::assets::{MANIFEST_URL, THEME_COLOR};
+use crate::assets::{MANIFEST_URL, THEME_COLOR, WASM, WASM_JS};
 
 const DESCRIPTION: &str = "Alley, l'équivalent de Discord chiffré de bout en bout : serveurs, \
 salons, messages, photos, vocaux et appels vidéo, illisibles pour le serveur. Sur iPhone, \
@@ -19,7 +20,7 @@ Android, Windows, macOS et Linux.";
 
 /// Les balises qui rendent la page installable et belle en plein écran,
 /// notamment sur iPhone et iPad (barre d'état, encoche, icône d'accueil), et
-/// qui disent au script où sont le site et l'API.
+/// qui disent au module WebAssembly où sont le site et l'API.
 fn head_tags(site: &Site) -> String {
     let attr = |s: &str| {
         s.replace('&', "&amp;")
@@ -44,10 +45,15 @@ fn seo(site: &Site, path: &str) -> Seo {
         .locale("fr_FR")
 }
 
-fn script(site: &Site, name: &str) -> String {
+/// Démarre le navigateur, écrit en Rust et compilé en WebAssembly : la seule
+/// ligne de JavaScript qu'exige un navigateur pour charger un module
+/// WebAssembly, générée ici comme le fait Paquets pour ses îlots (autorisée
+/// par son empreinte dans la politique de sécurité de la page). `page` dit au
+/// module s'il anime la vitrine ou l'application.
+fn boot(site: &Site, page: &str) -> String {
+    let (js, wasm) = (site.url(WASM_JS), site.url(WASM));
     format!(
-        r#"<script type="module" src="{}"></script>"#,
-        site.url(&format!("/assets/{name}"))
+        r#"<meta name="alley-page" content="{page}"/><link rel="modulepreload" href="{js}"/><link rel="preload" href="{wasm}" as="fetch" type="application/wasm" crossorigin=""/><script type="module">import init from "{js}";init({{module_or_path:"{wasm}"}});</script>"#
     )
 }
 
@@ -62,7 +68,7 @@ pub fn home(site: &Site) -> Page {
         .plain()
         .head(head_tags(site))
         .stylesheet(site.url("/assets/site.css"))
-        .head(script(site, "site.js"))
+        .head(boot(site, "site"))
         .body(site_header(site))
         .body(hero(site))
         .body(features())
@@ -316,7 +322,7 @@ fn site_footer(site: &Site) -> Element {
         )
 }
 
-/// L'application : seulement la coquille ; le script déchiffre et affiche tout
+/// L'application : seulement la coquille ; le WebAssembly déchiffre et affiche tout
 /// dans le navigateur.
 pub fn app_shell(site: &Site) -> Page {
     Page::new("Alley")
@@ -326,7 +332,7 @@ pub fn app_shell(site: &Site) -> Page {
         .plain()
         .head(head_tags(site))
         .stylesheet(site.url("/assets/app.css"))
-        .head(script(site, "app.js"))
+        .head(boot(site, "app"))
         .body(
             div()
                 .id("root")
