@@ -1371,3 +1371,83 @@ details > *:not(summary) {
   color: #fff;
   border-color: transparent;
 }
+
+/* ---- Salons éphémères : le hall ---------------------------------------- */
+
+.notice {
+  width: 100%; display: grid; gap: 8px; text-align: left; padding: 14px; border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--chat)); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.notice p { margin: 0; color: var(--muted); }
+.notice input { width: 100%; min-height: 44px; padding: 10px 12px; font-size: 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--rail); color: var(--fg); }
+
+.lobby { min-height: 100%; display: flex; flex-direction: column; overflow-y: auto; height: var(--app-height); }
+.lobby-head {
+  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 12px;
+  padding: calc(12px + var(--safe-top)) calc(16px + var(--safe-right)) 12px calc(16px + var(--safe-left));
+  background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+.lobby-head .spacer, .chat-head .spacer { flex: 1; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; font-size: 18px; }
+.me-chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px; border-radius: 999px; background: var(--elev); border: 1px solid var(--line); max-width: 50vw; }
+.me-chip span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-main { width: min(720px, 100%); margin: 0 auto; padding: 24px 16px calc(32px + var(--safe-bottom)); display: grid; gap: 14px; }
+.lobby-main h1 { margin: 8px 0 0; font-size: clamp(26px, 5vw, 34px); }
+.lobby-main > p { margin: 0; }
+.search { display: flex; gap: 8px; }
+.search input {
+  flex: 1; min-width: 0; min-height: 50px; padding: 0 16px; font-size: 17px; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--elev); color: var(--fg);
+}
+.search button { min-height: 50px; padding: 0 20px; border-radius: 14px; background: var(--accent); color: var(--accent-fg); font-weight: 700; }
+.rooms { display: grid; gap: 10px; margin-top: 6px; }
+.room-card {
+  display: grid; gap: 2px; text-align: left; padding: 14px 16px; border-radius: 14px;
+  background: var(--side); border: 1px solid var(--line); transition: border-color .15s, transform .15s;
+}
+.room-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.room-card.create { border-style: dashed; border-color: var(--accent); }
+.room-name { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; }
+.room-meta { color: var(--muted); font-size: 13px; }
+.empty { color: var(--muted); text-align: center; padding: 24px 8px; margin: 0; }
+.empty.error { color: var(--danger); }
+
+/* ---- Le salon ------------------------------------------------------------ */
+
+.room-layout, .room-layout.members-open { grid-template-columns: minmax(0, 1fr) 0; }
+.room-layout.members-open { grid-template-columns: minmax(0, 1fr) calc(260px + var(--safe-right)); }
+.room-layout .chat { padding-left: var(--safe-left); }
+.chat-head .topic { display: inline; }
+#call-btn.on { background: var(--danger); color: #fff; }
+.call-invite {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 8px 16px 0; padding: 8px 8px 8px 14px;
+  border-radius: 12px; background: color-mix(in srgb, var(--accent-2) 14%, var(--chat)); border: 1px solid color-mix(in srgb, var(--accent-2) 40%, transparent);
+}
+.call-invite button { min-height: 38px; padding: 0 16px; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 700; }
+.call-area { display: grid; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); max-height: 52vh; overflow-y: auto; }
+.call-area .tiles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); }
+.call-area .tile { aspect-ratio: 16 / 9; }
+.call-area .avatar.big { width: 64px; height: 64px; font-size: 24px; }
+.member.speaking .avatar { box-shadow: 0 0 0 2px var(--accent-2); }
+
+@media (max-width: 860px) {
+  .room-layout .members { width: min(300px, 85vw); }
+  .chat-head .topic { display: none; }
+  .call-area { max-height: 45vh; }
+}
+
+/* Le hall ne déborde jamais, même sur un petit écran. */
+.lobby { overflow-x: hidden; }
+.lobby-main { grid-template-columns: minmax(0, 1fr); box-sizing: border-box; }
+.lobby-main > * { min-width: 0; }
+.room-card { min-width: 0; width: 100%; }
+.check.small { align-items: flex-start; }
+.check.small input { flex: none; margin-top: 2px; }
+
+@media (max-width: 860px) {
+  .call-area .tiles { grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)); }
+  .call-area .tile { aspect-ratio: 4 / 3; }
+  .call-area .avatar.big { width: 52px; height: 52px; font-size: 20px; }
+  .call-controls button { min-width: 64px; padding: 8px; }
+}

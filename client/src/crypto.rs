@@ -7,19 +7,16 @@
 //! - jetons `[[BROCOLIS:v1:<base64>]]` ;
 //! - identité X25519 ; clé d'emballage = HKDF-SHA256(secret partagé, sel
 //!   `brocolis-x25519-wrap`, info = les deux clés publiques triées) : c'est
-//!   ainsi qu'une clé de serveur renouvelée est remise à chaque membre ;
+//!   ainsi que la clé d'un salon est remise à chaque nouvel arrivant ;
 //! - empreinte : 8 premiers octets de SHA-256, en hexa groupé par 4.
 //!
-//! S'y ajoutent, pour Alley : les identifiants dérivés de la clé d'un serveur
-//! et les signatures ECDSA P-256 des membres.
+//! S'y ajoutent, pour Alley, les identifiants dérivés d'une clé.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use hkdf::Hkdf;
-use p256::ecdsa::signature::{Signer as _, Verifier as _};
-use p256::ecdsa::{Signature, SigningKey, VerifyingKey};
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -221,50 +218,6 @@ impl Identity {
     }
 }
 
-/// Une clé de signature ECDSA P-256 : chaque membre signe ses messages et ses
-/// signaux, pour qu'aucun autre membre (qui a pourtant la clé du serveur) ne
-/// puisse parler en son nom.
-pub struct Signer(SigningKey);
-
-impl Signer {
-    pub fn generate() -> Self {
-        Signer(SigningKey::random(&mut OsRng))
-    }
-
-    pub fn from_b64(text: &str) -> Option<Self> {
-        Some(Signer(SigningKey::from_slice(&unb64(text)?).ok()?))
-    }
-
-    pub fn secret_b64(&self) -> String {
-        b64(&self.0.to_bytes())
-    }
-
-    /// La clé publique, SEC1 non compressée (65 octets), en base64.
-    pub fn public_b64(&self) -> String {
-        b64(self.0.verifying_key().to_encoded_point(false).as_bytes())
-    }
-
-    /// La signature (r ‖ s, 64 octets) de `text`, en base64.
-    pub fn sign(&self, text: &str) -> String {
-        let sig: Signature = self.0.sign(text.as_bytes());
-        b64(&sig.to_bytes())
-    }
-}
-
-/// `true` si `signature` est celle de `text` par la clé publique `public`.
-pub fn verify(public: &str, signature: &str, text: &str) -> bool {
-    let (Some(key), Some(sig)) = (unb64(public), unb64(signature)) else {
-        return false;
-    };
-    let (Ok(key), Ok(sig)) = (
-        VerifyingKey::from_sec1_bytes(&key),
-        Signature::from_slice(&sig),
-    ) else {
-        return false;
-    };
-    key.verify(text.as_bytes(), &sig).is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -339,18 +292,5 @@ mod tests {
         );
         let back = Identity::from_b64(&member.secret_b64()).unwrap();
         assert_eq!(back.public_b64(), member.public_b64());
-    }
-
-    #[test]
-    fn signatures_belong_to_their_author() {
-        let (ada, bob) = (Signer::generate(), Signer::generate());
-        let sig = ada.sign("bonjour");
-        assert!(verify(&ada.public_b64(), &sig, "bonjour"));
-        assert!(!verify(&ada.public_b64(), &sig, "bonjouR"));
-        assert!(!verify(&bob.public_b64(), &sig, "bonjour"));
-        assert!(!verify("pas une clé", &sig, "bonjour"));
-        let back = Signer::from_b64(&ada.secret_b64()).unwrap();
-        assert_eq!(back.public_b64(), ada.public_b64());
-        assert_eq!(unb64(&ada.public_b64()).unwrap().len(), 65);
     }
 }

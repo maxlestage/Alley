@@ -30,7 +30,7 @@ pub type ApiResult<T = Value> = Result<T, ApiError>;
 /// L'API : celle choisie dans les réglages, sinon celle de la page (vide :
 /// le même site).
 pub fn api_base() -> String {
-    let saved = app(|a| a.saved.server.clone());
+    let saved = app(|a| a.server.clone());
     let base = if saved.is_empty() {
         meta("alley-api")
     } else {

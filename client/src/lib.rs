@@ -2,8 +2,8 @@
 //! JavaScript écrite à la main.
 //!
 //! - [`crypto`] : le chiffrement de la messagerie Brocolis (AES-256-GCM,
-//!   X25519, HKDF-SHA256) et les signatures ECDSA des membres — compilé aussi
-//!   hors du navigateur, pour les tests du serveur ;
+//!   X25519, HKDF-SHA256) — compilé aussi hors du navigateur, pour les tests
+//!   du serveur ;
 //! - le reste n'existe que dans le navigateur : l'application (`app`, `ui`),
 //!   les appels WebRTC (`call`), la vitrine (`site`).
 
