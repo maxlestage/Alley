@@ -1,0 +1,89 @@
+# Teste chaque push, puis fusionne automatiquement la branche dans master.
+#
+# - rust : formatage, clippy, tests (API, chiffrement imposé, rotation de clé,
+#   CORS, HTTPS, export GitHub Pages) ;
+# - web : syntaxe des scripts, chiffrement du navigateur recoupé avec les
+#   vecteurs de Brocolis ;
+# - merge : quand tout est vert, la branche est fusionnée dans master (sauf
+#   master elle-même et les branches wip/...), puis Heroku (l'API) et GitHub
+#   Pages (le site) sont déployés.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  web:
+    name: Navigateur
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntaxe des scripts
+        run: for f in web/*.js; do node --check "$f"; done
+      - name: Formatage (Prettier)
+        run: npx --yes prettier@3.8.1 --check "web/*.js" "web/*.mjs" "web/*.css"
+      - name: Chiffrement, recoupé avec les vecteurs de Brocolis
+        run: node --test web/*.test.mjs
+
+  merge:
+    name: Fusion dans master
+    needs: [rust, web]
+    if: >-
+      github.event_name == 'push' && github.ref_name != 'master' &&
+      !startsWith(github.ref_name, 'wip/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    concurrency:
+      group: merge-into-master
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+      - name: Fusionne ${{ github.ref_name }}
+        env:
+          BRANCH: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git merge-base --is-ancestor "$SHA" HEAD; then
+            echo "$BRANCH est déjà dans master."
+            exit 0
+          fi
+          git merge --no-ff --no-edit "$SHA" -m "Merge branch '$BRANCH' into master (fusion automatique)"
+          git push origin HEAD:master
+          echo "::notice title=Fusion automatique::$BRANCH fusionnée dans master"
+      # Un push fait avec GITHUB_TOKEN ne lance aucun workflow : on déploie à la main.
+      - name: Déploie master (Heroku, puis GitHub Pages)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run heroku.yml --ref master --repo "$GITHUB_REPOSITORY"
+          gh workflow run pages.yml --ref master --repo "$GITHUB_REPOSITORY"
