@@ -84,7 +84,7 @@ pub const THEME_COLOR: &str = "#16131f";
 pub fn manifest(site: &Site) -> Manifest {
     Manifest::new("Alley — messagerie chiffrée")
         .short_name("Alley")
-        .description("Serveurs, salons, messages et appels chiffrés de bout en bout.")
+        .description("Salons éphémères chiffrés de bout en bout : rien n'est enregistré, tout s'efface à minuit.")
         .id(site.url(START_URL))
         .start_url(site.url(START_URL))
         .scope(site.url("/"))
