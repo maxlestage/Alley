@@ -29,6 +29,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   check:
@@ -60,6 +61,13 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      # Paquets est un dépôt privé : sans copie en cache, cargo a besoin d'un
+      # jeton qui peut le lire (secret PAQUETS_TOKEN, facultatif).
+      - name: Accès à Paquets
+        env:
+          PAQUETS_TOKEN: ${{ secrets.PAQUETS_TOKEN }}
+        if: env.PAQUETS_TOKEN != ''
+        run: git config --global url."https://x-access-token:${PAQUETS_TOKEN}@github.com/maxlestage/".insteadOf "https://github.com/maxlestage/"
       - name: Le navigateur, en WebAssembly
         run: cargo xtask web
       - id: pages

@@ -4,7 +4,7 @@
 //! rustup target add wasm32-unknown-unknown
 //! cargo xtask web       # client/ → client/pkg/ (WebAssembly)
 //! cargo xtask models    # les modèles de modération → models/
-//! cargo run -p xtask --features prompts -- prompts <vocabulaire> <textual.onnx>
+//! cargo run --manifest-path xtask/Cargo.toml --features prompts -- prompts <vocabulaire> <textual.onnx>
 //!                       # recalcule src/moderation/prompts.bin (rarement)
 //! cargo xtask merge | heroku | pages-enabled | api-url   # GitHub Actions
 //! ```
@@ -38,7 +38,7 @@ fn main() -> ExitCode {
         ),
         #[cfg(not(feature = "prompts"))]
         Some("prompts") => Err(
-            "cargo run -p xtask --features prompts -- prompts <vocabulaire> <textual.onnx>".into(),
+            "cargo run --manifest-path xtask/Cargo.toml --features prompts -- prompts <vocabulaire> <textual.onnx>".into(),
         ),
         Some("merge") => ci::merge(),
         Some("heroku") => ci::deploy_heroku(),
