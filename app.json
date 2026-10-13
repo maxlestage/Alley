@@ -1,0 +1,13 @@
+{
+  "name": "Alley",
+  "description": "L'équivalent de Discord chiffré de bout en bout : serveurs, salons, messages et images, illisibles pour le serveur. Écrit avec Paquets, chiffré avec Brocolis.",
+  "keywords": ["chat", "e2ee", "rust", "paquets", "brocolis", "pwa"],
+  "stack": "container",
+  "env": {
+    "DATABASE_URL": {
+      "description": "Où garder les données (toutes chiffrées) : vide = en mémoire ; ajoutez Heroku Postgres pour les conserver.",
+      "required": false
+    }
+  },
+  "success_url": "/"
+}
