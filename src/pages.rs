@@ -14,9 +14,9 @@ use paquets::vitesse::Response;
 use crate::Site;
 use crate::assets::{MANIFEST_URL, THEME_COLOR, WASM, WASM_JS};
 
-const DESCRIPTION: &str = "Alley, l'équivalent de Discord chiffré de bout en bout : serveurs, \
-salons, messages, photos, vocaux et appels vidéo, illisibles pour le serveur. Sur iPhone, \
-Android, Windows, macOS et Linux.";
+const DESCRIPTION: &str = "Alley : des salons de discussion éphémères, chiffrés de bout en bout. \
+Un pseudonyme, et c'est tout ; rien n'est enregistré, et tout disparaît à minuit. Messages, photos, \
+vocaux et appels vidéo, sur iPhone, Android, Windows, macOS et Linux.";
 
 /// Les balises qui rendent la page installable et belle en plein écran,
 /// notamment sur iPhone et iPad (barre d'état, encoche, icône d'accueil), et
@@ -59,7 +59,7 @@ fn boot(site: &Site, page: &str) -> String {
 
 /// La vitrine.
 pub fn home(site: &Site) -> Page {
-    Page::new("Alley — l'équivalent de Discord, chiffré de bout en bout")
+    Page::new("Alley — salons éphémères, chiffrés de bout en bout")
         .lang("fr")
         .description(DESCRIPTION)
         .seo(seo(site, "/").json_ld(
@@ -114,23 +114,19 @@ fn hero(site: &Site) -> Element {
                 .class("hero-text")
                 .child(
                     p().class("eyebrow")
-                        .text("🔒 Chiffré de bout en bout · Gratuit · Sans compte"),
+                        .text("🔒 Chiffré de bout en bout · Rien n'est enregistré · Gratuit"),
                 )
-                .child(h1().text("Vos communautés. Vos messages. Personne d'autre."))
+                .child(h1().text("On parle. À minuit, tout s'efface."))
                 .child(p().class("lead").text(
-                    "Alley, ce sont des serveurs, des salons, des discussions et des appels en \
-                     temps réel, comme sur Discord. Sauf que tout est chiffré sur votre appareil \
-                     avant de partir — même qui écrit, où et quand : le serveur ne voit que des \
-                     jetons illisibles.",
+                    "Alley, ce sont des salons de discussion comme sur Discord, en plus léger : un \
+                     pseudonyme et c'est parti. Un salon ne vit que tant que quelqu'un y est, personne \
+                     ne voit ce qui s'est dit avant son arrivée, et à minuit il ne reste rien — ni sur \
+                     le serveur, ni sur votre téléphone.",
                 ))
                 .child(
                     div()
                         .class("cta")
-                        .child(
-                            a().class("button")
-                                .href(site.url("/app/#nouveau"))
-                                .text("Créer mon serveur"),
-                        )
+                        .child(a().class("button").href(site.url("/app/")).text("Entrer dans Alley"))
                         .child(
                             a().class("button ghost")
                                 .href("#securite")
@@ -138,8 +134,8 @@ fn hero(site: &Site) -> Element {
                         ),
                 )
                 .child(p().class("hint").text(
-                    "Fonctionne dans le navigateur et s'installe comme une app sur iPhone, iPad, \
-                     Android, Windows, macOS, Linux et ChromeOS.",
+                    "Dans le navigateur, et installable comme une app sur iPhone, iPad, Android, \
+                     Windows, macOS, Linux et ChromeOS.",
                 )),
         )
         .child(hero_demo())
@@ -168,14 +164,14 @@ fn hero_demo() -> Element {
                 .child(
                     div()
                         .class("pane-title")
-                        .text("# général — ce que vous voyez"),
+                        .text("# soirée-jeux — ce que vous voyez"),
                 )
                 .child(bubble(
                     "Inès",
                     "#7c5cff",
                     "On se retrouve à 20 h pour la session ?",
                 ))
-                .child(bubble("Malo", "#22d3a6", "Ok ! Je lance l'appel vidéo 🎥"))
+                .child(bubble("Malo", "#22d3a6", "Ok ! Et à minuit, plus rien 🌙"))
                 .child(bubble(
                     "Inès",
                     "#7c5cff",
@@ -185,10 +181,14 @@ fn hero_demo() -> Element {
         .child(
             div()
                 .class("pane server")
-                .child(div().class("pane-title").text("ce que voit le serveur"))
-                .child(cipher("#4182 · [[BROCOLIS:v1:q9Xw3J0+Lr2c…Pz8=]]"))
-                .child(cipher("#4183 · [[BROCOLIS:v1:7HfK1aQe9mZ0…tY4=]]"))
-                .child(cipher("#4184 · [[BROCOLIS:v1:Wm2Lr8sB1cXn…Qa0=]]")),
+                .child(
+                    div()
+                        .class("pane-title")
+                        .text("ce que voit le serveur (et oublie aussitôt)"),
+                )
+                .child(cipher("[[BROCOLIS:v1:q9Xw3J0+Lr2c…Pz8=]]"))
+                .child(cipher("[[BROCOLIS:v1:7HfK1aQe9mZ0…tY4=]]"))
+                .child(cipher("[[BROCOLIS:v1:Wm2Lr8sB1cXn…Qa0=]]")),
         )
 }
 
@@ -204,19 +204,19 @@ fn features() -> Element {
     section()
         .id("fonctionnalites")
         .class("section")
-        .child(h2().text("Tout ce qu'on attend d'un Discord"))
+        .child(h2().text("Simple, vivant, sans traces"))
         .child(p().class("section-lead").text(
-            "Les gestes que vous connaissez déjà, sans rien céder sur la confidentialité.",
+            "Les gestes d'un Discord, sans compte, sans historique, sans rien qui traîne.",
         ))
         .child(
             div()
                 .class("grid")
-                .child(card("🏰", "Serveurs et salons", "Créez autant de serveurs que vous voulez, organisez-les en salons textuels et vocaux, renommez-les, donnez-leur un sujet."))
-                .child(card("🎙️", "Appels audio et vidéo", "Rejoignez un salon vocal : voix, caméra et partage d'écran, de pair à pair et chiffrés de bout en bout."))
-                .child(card("⚡", "Temps réel", "Les messages arrivent instantanément, avec « en train d'écrire… », la présence en ligne et les badges de non-lus."))
-                .child(card("🖼️", "Photos et vocaux", "Envoyez des photos et des messages vocaux : ils sont chiffrés sur votre appareil, comme le texte."))
-                .child(card("💬", "Réponses, modifications", "Répondez, corrigez, supprimez. Mise en forme en gras, italique, code, citations et liens."))
-                .child(card("🛡️", "Modération réelle", "L'admin peut exclure un membre : la clé du serveur est renouvelée et redistribuée aux autres, l'exclu ne lit plus rien.")),
+                .child(card("🎭", "Un pseudonyme, c'est tout", "Pas de compte, pas d'e-mail, pas de numéro. Choisissez un nom, entrez. Il est oublié dès que vous partez."))
+                .child(card("🔎", "Cherchez ou créez", "La liste des salons ouverts, une barre de recherche, et si votre salon n'existe pas encore, il est créé d'un geste. Ou privé, seulement par lien."))
+                .child(card("🌱", "Des salons vivants", "Un salon existe tant que quelqu'un y est. Le dernier qui part l'emporte avec lui."))
+                .child(card("🙈", "Pas d'historique", "En arrivant, vous ne voyez rien de ce qui s'est dit avant vous : le serveur ne garde aucun message, il les relaie et les oublie."))
+                .child(card("🌙", "Tout s'efface à minuit", "À minuit dans votre pays, l'écran se vide ; à minuit dans le pays de son créateur, le salon disparaît."))
+                .child(card("🎙️", "Photos, vocaux, appels", "Envoyez des photos et des messages vocaux, appelez en audio ou en vidéo, partagez votre écran — chiffré, de pair à pair.")),
         )
 }
 
@@ -230,22 +230,22 @@ fn security() -> Element {
     section()
         .id("securite")
         .class("section")
-        .child(h2().text("Chiffré sur votre appareil, illisible partout ailleurs"))
+        .child(h2().text("Chiffré sur votre appareil, oublié partout"))
         .child(
             ol()
                 .class("steps")
-                .child(step("1", "Une clé par serveur", "En créant un serveur, votre appareil tire une clé AES-256 au hasard. Elle ne quitte jamais votre appareil autrement que dans un lien d'invitation."))
-                .child(step("2", "Le lien porte la clé", "La clé est placée après le « # » du lien : cette partie n'est jamais envoyée au serveur par le navigateur. Partagez le lien par un canal de confiance."))
-                .child(step("3", "Tout est chiffré, même les métadonnées", "Texte, photos, vocaux, noms, pseudos, mais aussi l'auteur, le salon et l'heure de chaque message : tout part dans un jeton [[BROCOLIS:v1:…]], signé par son auteur."))
-                .child(step("4", "Exclure, c'est changer de clé", "Quand l'admin exclut quelqu'un, une nouvelle clé est tirée et remise à chaque membre restant, chiffrée pour lui seul (X25519, comme l'appairage Brocolis)."))
-                .child(step("5", "Vérifiez l'empreinte", "Chaque serveur affiche une empreinte (ex. 4BB0-6F8E-4E3A-7715). Comparez-la de vive voix : identique pour tous, personne ne s'est intercalé.")),
+                .child(step("1", "Une clé par salon", "Le premier arrivant tire une clé AES-256 au hasard, sur son appareil. Elle n'en sort jamais en clair."))
+                .child(step("2", "Remise de la main à la main", "Chaque nouvel arrivant présente une clé X25519 jetable ; les présents lui remettent la clé du salon, chiffrée pour lui seul (l'appairage de la messagerie Brocolis)."))
+                .child(step("3", "Tout est chiffré avant de partir", "Messages, pseudonymes, photos, vocaux et mise en relation des appels deviennent des jetons [[BROCOLIS:v1:…]] que le serveur relaie sans pouvoir les lire."))
+                .child(step("4", "Rien n'est gardé", "Le serveur ne stocke aucun message : les absents ne reçoivent rien, les retardataires ne voient rien d'avant. Rien n'est écrit sur votre appareil non plus."))
+                .child(step("5", "Vérifiez l'empreinte", "Chaque salon affiche l'empreinte de sa clé (ex. 4BB0-6F8E-4E3A-7715) : identique chez tous les présents, personne ne s'est intercalé.")),
         )
         .child(
             div()
                 .class("grid tech")
-                .child(card("🥦", "Le protocole Brocolis", "AES-256-GCM et jetons de la messagerie Brocolis, clés redistribuées par X25519 + HKDF-SHA256, empreintes identiques à l'app Brocolis."))
-                .child(card("📦", "Un serveur Paquets", "Écrit en Rust avec Paquets : WAF, limites de débit, CSP stricte, HTTPS imposé, HSTS et anti-robots devant chaque requête."))
-                .child(card("🙈", "Ce que voit le serveur", "Des numéros de messages et des jetons. Ni la clé, ni le contenu, ni les noms, ni qui a écrit quoi, dans quel salon ou à quelle heure, ni qui est en ligne.")),
+                .child(card("🥦", "Le protocole Brocolis", "AES-256-GCM et jetons de la messagerie Brocolis, clés remises par X25519 + HKDF-SHA256, empreintes identiques à l'app Brocolis."))
+                .child(card("📦", "Un serveur Paquets", "Écrit en Rust avec Paquets : WAF, limites de débit, CSP stricte, HTTPS imposé, HSTS. Et aucune base de données : tout vit en mémoire, le temps d'un salon."))
+                .child(card("🦀", "100 % Rust", "Le navigateur aussi est écrit en Rust, compilé en WebAssembly : chiffrement, salons, appels.")),
         )
 }
 
@@ -299,12 +299,12 @@ fn faq() -> Element {
         .id("faq")
         .class("section narrow")
         .child(h2().text("Questions fréquentes"))
-        .child(qa("Faut-il créer un compte ?", "Non. Choisissez un pseudo (chiffré, lui aussi) et c'est parti. Vos serveurs et leurs clés sont gardés sur votre appareil."))
-        .child(qa("Quelqu'un a eu le lien sans y être invité : que faire ?", "L'admin l'exclut, ou renouvelle simplement la clé : chaque membre connu reçoit la nouvelle clé, chiffrée pour lui, et l'ancien lien ne mène plus nulle part."))
-        .child(qa("Que voit exactement le serveur ?", "Qu'un serveur Alley existe, combien il a de membres et de messages, et des jetons chiffrés. Pas les noms, pas le contenu, pas l'auteur, le salon ni l'heure d'un message, pas qui est en ligne. Il voit, comme tout serveur web, les adresses IP qui se connectent : passez par un VPN ou Tor si cela compte pour vous."))
-        .child(qa("Les appels sont-ils chiffrés ?", "Oui : ils passent de pair à pair en WebRTC (DTLS-SRTP), et leur mise en relation est chiffrée avec la clé du serveur, ce qui empêche le serveur de s'intercaler."))
-        .child(qa("Comment changer d'appareil ?", "Ouvrez le lien d'invitation du serveur sur le nouvel appareil. Pour garder vos droits d'administrateur, utilisez le lien d'administration, à garder pour vous."))
-        .child(qa("Ça marche hors ligne ?", "L'app s'ouvre sans réseau et affiche vos serveurs ; les messages partent et arrivent dès que la connexion revient."))
+        .child(qa("Faut-il créer un compte ?", "Non. Un pseudonyme, le temps de la visite. Il n'est enregistré nulle part : fermez la page et il est oublié."))
+        .child(qa("Pourquoi je ne vois pas les anciens messages ?", "Parce qu'ils n'existent plus nulle part. Le serveur relaie chaque message aux personnes présentes, puis l'oublie. C'est voulu : ce qui se dit dans Alley reste entre ceux qui étaient là."))
+        .child(qa("Quand un salon disparaît-il ?", "Dès que la dernière personne en sort, et au plus tard à minuit dans le pays de celui qui l'a créé. De votre côté, l'écran se vide aussi à minuit chez vous."))
+        .child(qa("Que voit le serveur ?", "Le nom des salons publics (pour qu'on puisse les chercher) et combien de personnes y sont. Ni les pseudonymes, ni les messages, ni la clé. Comme tout serveur web, il voit les adresses IP qui se connectent."))
+        .child(qa("Les appels sont-ils chiffrés ?", "Oui : ils passent de pair à pair en WebRTC (DTLS-SRTP), et leur mise en relation est chiffrée avec la clé du salon."))
+        .child(qa("Comment inviter quelqu'un dans un salon privé ?", "Touchez 🔗 dans le salon : le lien marche tant que le salon existe, c'est-à-dire tant que quelqu'un y est, et jusqu'à minuit."))
 }
 
 fn site_footer(site: &Site) -> Element {
@@ -314,7 +314,7 @@ fn site_footer(site: &Site) -> Element {
         .child(p().text("Écrit avec Paquets 📦 · chiffré avec Brocolis 🥦"))
         .child(
             nav()
-                .child(a().href(site.url("/app/")).text("Ouvrir l'app"))
+                .child(a().href(site.url("/app/")).text("Entrer dans Alley"))
                 .child(
                     a().href(format!("{}/api/v1/stats", site.api))
                         .text("Ce que voit le serveur"),

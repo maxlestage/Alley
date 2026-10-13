@@ -1,13 +1,16 @@
 {
   "name": "Alley",
-  "description": "L'équivalent de Discord chiffré de bout en bout : serveurs, salons, messages et images, illisibles pour le serveur. Écrit avec Paquets, chiffré avec Brocolis.",
-  "keywords": ["chat", "e2ee", "rust", "paquets", "brocolis", "pwa"],
+  "description": "Alley : des salons de discussion éphémères, chiffrés de bout en bout. Un pseudonyme, rien n'est enregistré, tout disparaît à minuit. Écrit avec Paquets, chiffré avec Brocolis.",
+  "keywords": [
+    "chat",
+    "e2ee",
+    "ephemeral",
+    "rust",
+    "paquets",
+    "brocolis",
+    "pwa",
+    "webassembly"
+  ],
   "stack": "container",
-  "env": {
-    "DATABASE_URL": {
-      "description": "Où garder les données (toutes chiffrées) : vide = en mémoire ; ajoutez Heroku Postgres pour les conserver.",
-      "required": false
-    }
-  },
   "success_url": "/"
 }

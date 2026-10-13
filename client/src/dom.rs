@@ -42,12 +42,6 @@ pub fn scope<T>(name: &str, f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// Libère les écouteurs d'une zone disparue (une fenêtre fermée).
-pub fn drop_scope(name: &str) {
-    let old = SCOPES.with(|s| s.borrow_mut().remove(name));
-    drop(old);
-}
-
 fn keep(listener: Listener) {
     let name = STACK
         .with(|s| s.borrow().last().cloned())
@@ -150,10 +144,6 @@ impl El {
     pub fn attr(self, k: &str, v: impl AsRef<str>) -> Self {
         let _ = self.0.set_attribute(k, v.as_ref());
         self
-    }
-
-    pub fn attr_if(self, k: &str, on: bool) -> Self {
-        if on { self.attr(k, "") } else { self }
     }
 
     /// Une propriété JavaScript (`value`, `checked`, `muted`…).
@@ -321,18 +311,6 @@ pub fn has(obj: &JsValue, key: &str) -> bool {
     !get(obj, key).is_undefined()
 }
 
-pub fn storage_get(key: &str) -> Option<String> {
-    window().local_storage().ok()??.get_item(key).ok()?
-}
-
-pub fn storage_set(key: &str, value: &str) -> bool {
-    window()
-        .local_storage()
-        .ok()
-        .flatten()
-        .is_some_and(|s| s.set_item(key, value).is_ok())
-}
-
 pub fn matches_media(query: &str) -> bool {
     window()
         .match_media(query)
@@ -362,10 +340,6 @@ pub fn confirm(text: &str) -> bool {
     window().confirm_with_message(text).unwrap_or(false)
 }
 
-pub fn prompt(text: &str) -> Option<String> {
-    window().prompt_with_message(text).ok().flatten()
-}
-
 /// Copie dans le presse-papiers, ou affiche le texte à copier.
 pub async fn copy(text: &str, done: &str) {
     let clipboard = get(&window().navigator(), "clipboard");
@@ -383,60 +357,14 @@ pub async fn copy(text: &str, done: &str) {
 // ---------------------------------------------------------------------------
 // Dates, en français.
 
-const DAYS: [&str; 7] = [
-    "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
-];
-const MONTHS: [&str; 12] = [
-    "janvier",
-    "février",
-    "mars",
-    "avril",
-    "mai",
-    "juin",
-    "juillet",
-    "août",
-    "septembre",
-    "octobre",
-    "novembre",
-    "décembre",
-];
-
 fn date(ts: f64) -> js_sys::Date {
     js_sys::Date::new(&JsValue::from_f64(ts))
-}
-
-fn same_day(a: &js_sys::Date, b: &js_sys::Date) -> bool {
-    a.get_full_year() == b.get_full_year()
-        && a.get_month() == b.get_month()
-        && a.get_date() == b.get_date()
-}
-
-/// `Aujourd'hui`, `Hier` ou `mardi 13 octobre 2026`.
-pub fn day_label(ts: f64) -> String {
-    let d = date(ts);
-    if same_day(&d, &date(now())) {
-        return "Aujourd'hui".into();
-    }
-    if same_day(&d, &date(now() - 86_400_000.0)) {
-        return "Hier".into();
-    }
-    format!(
-        "{} {} {} {}",
-        DAYS[d.get_day() as usize % 7],
-        d.get_date(),
-        MONTHS[d.get_month() as usize % 12],
-        d.get_full_year()
-    )
 }
 
 /// `14:05`.
 pub fn time_label(ts: f64) -> String {
     let d = date(ts);
     format!("{:02}:{:02}", d.get_hours(), d.get_minutes())
-}
-
-pub fn full_date(ts: f64) -> String {
-    format!("{} à {}", day_label(ts), time_label(ts))
 }
 
 thread_local! {
