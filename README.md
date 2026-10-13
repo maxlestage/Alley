@@ -16,6 +16,11 @@ et l'API sur Heroku — voir [Déploiement](#déploiement).
   `App` Rust — Vitesse (HTTP + WebSocket), Securite (WAF, limites de débit,
   CSP stricte, HTTPS imposé, HSTS, CORS, anti-robots), Memoire (données),
   Active (pages SEO, PWA).
+- 🦀 **100 % Rust** : le serveur, et tout le navigateur — chiffrement,
+  application, appels WebRTC, vitrine — compilé en **WebAssembly**
+  ([`client/`](client/)). Aucune ligne de JavaScript écrite à la main : le
+  navigateur ne reçoit que la colle générée par wasm-bindgen et une ligne de
+  démarrage générée par le serveur (comme les îlots de Paquets).
 - 📱 **Sur tous les systèmes** : une application web installable (PWA) —
   iPhone et iPad (Safari → Partager → *Sur l'écran d'accueil*), Android,
   Windows, macOS, Linux, ChromeOS. Plein écran, encoche et clavier iOS gérés,
@@ -102,6 +107,9 @@ premier lancement (modifiable ensuite dans *Réglages → Avancé*).
 ## Lancer en local
 
 ```sh
+rustup target add wasm32-unknown-unknown
+scripts/wasm-bindgen.sh                    # wasm-bindgen, à la version de Cargo.lock
+scripts/web.sh                             # le navigateur : client/ → client/pkg/ (WebAssembly)
 cargo run                                  # http://localhost:3000
 DATABASE_URL=sqlite://alley.db cargo run   # données (chiffrées) gardées dans un fichier
 BASE_PATH=/Alley ALLEY_API_URL=https://mon-api.herokuapp.com cargo run -- export dist
@@ -121,9 +129,12 @@ renvoie vers la version sécurisée si on l'ouvre en HTTP.
 ## Tests
 
 ```sh
-cargo test                     # API, chiffrement imposé, rotation et exclusion, CORS, HTTPS, export Pages
-node --test web/*.test.mjs     # chiffrement du navigateur, recoupé avec les vecteurs de Brocolis
+cargo test --workspace    # API, chiffrement imposé, rotation et exclusion, CORS, HTTPS, export Pages,
+                          # et le chiffrement du navigateur recoupé avec les vecteurs de Brocolis
 ```
+
+Les tests du serveur chiffrent avec le code même du navigateur
+(`alley_web::crypto`, compilé ici sans WebAssembly).
 
 Testé aussi dans de vrais navigateurs (Chromium, ordinateur, iPhone et Android
 émulés) : discussion, appel audio et vidéo, exclusion d'un membre et
@@ -138,10 +149,14 @@ l'export GitHub Pages en cross-origin.
 | `src/protocol.rs` | ce que le serveur vérifie des jetons et des secrets |
 | `src/api.rs` | modèles (`#[model]`) et routes de l'API, rotation de clé, WebSocket |
 | `src/live.rs` | diffusion temps réel (sans savoir qui est connecté) |
-| `src/pages.rs` | la vitrine et la coquille de l'app |
-| `src/assets.rs` | fichiers du navigateur, manifeste et service worker |
+| `src/pages.rs` | la vitrine et la coquille de l'app, la ligne de démarrage du WebAssembly |
+| `src/assets.rs` | fichiers du navigateur (WebAssembly compris), manifeste et service worker |
 | `src/export.rs` | l'export statique pour GitHub Pages |
-| `web/brocolis.js` | AES-GCM, X25519, ECDSA (WebCrypto), compatibles Brocolis |
-| `web/call.js` | les appels WebRTC |
-| `web/app.js`, `web/app.css` | l'application |
-| `web/site.js`, `web/site.css` | la vitrine |
+| `build.rs` | range `client/pkg/` dans le binaire |
+| `client/src/crypto.rs` | AES-256-GCM, X25519 + HKDF (format Brocolis), ECDSA P-256 |
+| `client/src/app.rs`, `model.rs`, `net.rs` | l'application : serveurs, clés, messages, temps réel |
+| `client/src/ui.rs`, `dom.rs` | l'affichage, construit en Rust (aucun HTML injecté) |
+| `client/src/call.rs` | les appels WebRTC |
+| `client/src/site.rs` | la vitrine (installation selon l'appareil) |
+| `web/*.css`, `web/icons/` | les styles et les icônes |
+| `scripts/web.sh`, `scripts/wasm-bindgen.sh` | compiler le navigateur |
