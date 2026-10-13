@@ -5,7 +5,8 @@
 # L'adresse de l'API vient, dans l'ordre :
 #   1. de la variable ALLEY_API_URL (Settings → Secrets and variables → Actions) ;
 #   2. sinon de l'app Heroku (HEROKU_API_KEY + HEROKU_APP_NAME) ;
-#   3. sinon l'app demande l'adresse du serveur au premier lancement.
+#   3. sinon l'app demande l'adresse du serveur au premier lancement
+# (`cargo xtask api-url`, en Rust).
 #
 # À faire une fois : Settings → Pages → Build and deployment → Source :
 # GitHub Actions. En attendant, le workflow s'arrête avec une explication.
@@ -36,20 +37,15 @@ jobs:
     outputs:
       enabled: ${{ steps.check.outputs.enabled }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - id: check
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type' 2>/dev/null | grep -q workflow; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning title=GitHub Pages est désactivé::Settings → Pages → Source : GitHub Actions, puis relancez ce workflow."
-            {
-              echo "### GitHub Pages n'est pas encore activé"
-              echo "Settings → Pages → Build and deployment → Source : **GitHub Actions**, puis Actions → Pages → Run workflow."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: cargo xtask pages-enabled
 
   build:
     name: Construction
@@ -71,21 +67,10 @@ jobs:
       - name: Adresse de l'API
         id: api
         env:
-          API_URL: ${{ vars.ALLEY_API_URL }}
+          ALLEY_API_URL: ${{ vars.ALLEY_API_URL }}
           HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          APP: ${{ vars.HEROKU_APP_NAME }}
-        run: |
-          url="${API_URL:-}"
-          if [ -z "$url" ] && [ -n "${HEROKU_API_KEY:-}" ] && [ -n "${APP:-}" ]; then
-            url=$(curl -fsS -H "Accept: application/vnd.heroku+json; version=3" \
-              -H "Authorization: Bearer $HEROKU_API_KEY" \
-              "https://api.heroku.com/apps/$APP" | jq -r '.web_url // empty' || true)
-          fi
-          url="${url%/}"
-          if [ -z "$url" ]; then
-            echo "::warning title=Pas d'API configurée::L'app demandera l'adresse du serveur Alley au premier lancement. Déployez l'API (workflow Heroku) ou définissez la variable ALLEY_API_URL."
-          fi
-          echo "url=$url" >> "$GITHUB_OUTPUT"
+          HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
+        run: cargo xtask api-url
       - name: Export statique
         env:
           BASE_PATH: ${{ steps.pages.outputs.base_path }}

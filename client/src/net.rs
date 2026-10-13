@@ -7,20 +7,41 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, RequestCache, RequestInit, Response};
 
 use crate::dom::{meta, window};
+use crate::i18n::{fill, t};
 use crate::model::app;
 
-/// Une erreur d'API : le statut HTTP (0 sans réseau) et un message lisible.
+/// Une erreur d'API : le statut HTTP (0 sans réseau) et le code d'erreur du
+/// serveur (`{"error": code}`, ou `code` pour le bouclier).
 #[derive(Debug, Clone)]
 pub struct ApiError {
     pub status: u16,
-    pub message: String,
+    pub code: String,
 }
 
 impl ApiError {
-    pub fn new(status: u16, message: impl Into<String>) -> Self {
+    pub fn new(status: u16, code: impl Into<String>) -> Self {
         ApiError {
             status,
-            message: message.into(),
+            code: code.into(),
+        }
+    }
+
+    pub fn banned(&self) -> bool {
+        self.code == "banned"
+    }
+
+    /// Le message, dans la langue choisie.
+    pub fn text(&self) -> String {
+        let t = t();
+        match (self.status, self.code.as_str()) {
+            (0, _) => t.err_network.into(),
+            (_, "banned") => t.banned_body.into(),
+            (_, "forbidden_name") => t.room_name_forbidden.into(),
+            (_, "bad_name") => t.err_bad_name.into(),
+            (_, "too_many_rooms") => t.err_too_many_rooms.into(),
+            (_, "room_gone") | (404, _) => t.room_gone.into(),
+            (429, _) => t.err_rate.into(),
+            (status, _) => fill(t.err_generic, &[&status.to_string()]),
         }
     }
 }
@@ -71,7 +92,7 @@ pub async fn request(
     headers: &[(&str, String)],
     body: Option<&Value>,
 ) -> ApiResult {
-    let h = Headers::new().map_err(|_| ApiError::new(0, "en-têtes"))?;
+    let h = Headers::new().map_err(|_| ApiError::new(0, "headers"))?;
     for (k, v) in headers {
         let _ = h.append(k, v);
     }
@@ -86,7 +107,7 @@ pub async fn request(
     let url = format!("{}{path}", api_base());
     let res = JsFuture::from(window().fetch_with_str_and_init(&url, &init))
         .await
-        .map_err(|_| ApiError::new(0, "Pas de connexion au serveur Alley."))?;
+        .map_err(|_| ApiError::new(0, "network"))?;
     let res: Response = res.unchecked_into();
     let status = res.status();
     if status == 204 {
@@ -102,12 +123,11 @@ pub async fn request(
     };
     let data: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
     if !res.ok() {
-        let message = ["message", "detail", "title"]
+        let code = ["error", "code"]
             .iter()
             .find_map(|k| data[k].as_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("Erreur {status}"));
-        return Err(ApiError::new(status, message));
+            .unwrap_or_default();
+        return Err(ApiError::new(status, code));
     }
     Ok(data)
 }

@@ -545,8 +545,8 @@ pub fn link_state(call: &Call, id: &str) -> Option<&'static str> {
     let p = call.peers.get(id)?;
     match p.pc.connection_state() {
         RtcPeerConnectionState::Connected => None,
-        RtcPeerConnectionState::Failed => Some("échec de connexion"),
-        _ => Some("connexion…"),
+        RtcPeerConnectionState::Failed => Some(crate::i18n::t().link_failed),
+        _ => Some(crate::i18n::t().link_connecting),
     }
 }
 

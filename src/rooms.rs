@@ -12,8 +12,15 @@
 //! Le serveur connaît le nom des salons publics (pour qu'on puisse les
 //! chercher) et le nombre de présents ; il ne connaît ni les pseudonymes, ni
 //! les messages, ni la clé du salon.
+//!
+//! Qui se connecte avec un mot de passe apporte une **marque** : une empreinte
+//! tirée de son pseudonyme et de son mot de passe, dans son navigateur. Le
+//! salon la retient tant qu'il vit, pour que cette personne le retrouve
+//! ([`Rooms::mine`]), depuis n'importe quel appareil. Le serveur ne peut en
+//! déduire ni le pseudonyme ni le mot de passe.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::net::IpAddr;
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -32,6 +39,13 @@ pub const MAX_NAME: usize = 40;
 const UNJOINED_TTL: Duration = Duration::from_secs(60);
 /// Messages en attente pour une connexion lente, au plus.
 const BACKLOG: usize = 512;
+/// Marques retenues par un salon, au plus.
+const MAX_TAGS: usize = 256;
+
+/// Une marque : 64 caractères hexadécimaux.
+pub fn is_tag(tag: &str) -> bool {
+    tag.len() == 64 && tag.bytes().all(|b| b.is_ascii_hexdigit())
+}
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
 
@@ -91,6 +105,8 @@ struct Member {
     x: String,
     tx: mpsc::Sender<String>,
     order: u64,
+    /// Son adresse, pour fermer ses connexions s'il est bloqué.
+    ip: Option<IpAddr>,
 }
 
 struct Room {
@@ -102,6 +118,8 @@ struct Room {
     created: Instant,
     members: BTreeMap<String, Member>,
     next_order: u64,
+    /// Les marques de ceux qui y sont venus connectés.
+    tags: HashSet<String>,
 }
 
 impl Room {
@@ -166,6 +184,7 @@ impl Rooms {
             created: Instant::now(),
             members: BTreeMap::new(),
             next_order: 0,
+            tags: HashSet::new(),
         };
         let info = room.info();
         rooms.insert(id, room);
@@ -194,9 +213,24 @@ impl Rooms {
         self.rooms.lock().unwrap().get(id).map(Room::info)
     }
 
+    /// Les salons encore ouverts où est venue la personne de cette marque
+    /// (privés compris).
+    pub fn mine(&self, tag: &str) -> Vec<Value> {
+        let rooms = self.rooms.lock().unwrap();
+        let mut found: Vec<&Room> = rooms.values().filter(|r| r.tags.contains(tag)).collect();
+        found.sort_by(|a, b| a.name.cmp(&b.name));
+        found.into_iter().take(100).map(Room::info).collect()
+    }
+
     /// Entre dans un salon : la connexion reçoit d'abord `welcome` (qui elle
     /// est, qui est déjà là), et les autres apprennent son arrivée.
-    pub fn join(&self, id: &str, x: String) -> Option<Joined> {
+    pub fn join(
+        &self,
+        id: &str,
+        x: String,
+        ip: Option<IpAddr>,
+        tag: Option<&str>,
+    ) -> Option<Joined> {
         let mut rooms = self.rooms.lock().unwrap();
         let room = rooms.get_mut(id)?;
         if room.members.len() >= MAX_MEMBERS || room.expires_at <= now_ms() {
@@ -221,7 +255,12 @@ impl Rooms {
         let _ = tx.try_send(welcome.to_string());
         let joined = json!({ "type": "joined", "id": me, "x": x, "order": order }).to_string();
         room.broadcast(&me, &joined);
-        room.members.insert(me.clone(), Member { x, tx, order });
+        room.members.insert(me.clone(), Member { x, tx, order, ip });
+        if let Some(tag) = tag.filter(|t| is_tag(t))
+            && room.tags.len() < MAX_TAGS
+        {
+            room.tags.insert(tag.to_owned());
+        }
         Some(Joined { me, inbox })
     }
 
@@ -250,6 +289,39 @@ impl Rooms {
         match to {
             Some(to) => room.send(to, &event),
             None => room.broadcast(from, &event),
+        }
+    }
+
+    /// Relaie une image vérifiée : `data` (chiffré avec la clé du salon) porte
+    /// la clé de l'image, `c` l'image chiffrée avec cette clé, et `kc`
+    /// l'empreinte de cette clé, pour que chacun vérifie que l'image reçue est
+    /// bien celle que le serveur a vue.
+    pub fn relay_image(&self, id: &str, from: &str, data: &str, c: &str, kc: &str) {
+        let rooms = self.rooms.lock().unwrap();
+        let Some(room) = rooms.get(id) else { return };
+        let event =
+            json!({ "type": "relay", "from": from, "data": data, "c": c, "kc": kc }).to_string();
+        room.broadcast(from, &event);
+    }
+
+    /// Un message du serveur pour une seule connexion.
+    pub fn notify(&self, id: &str, to: &str, event: &Value) {
+        let rooms = self.rooms.lock().unwrap();
+        if let Some(room) = rooms.get(id) {
+            room.send(to, &event.to_string());
+        }
+    }
+
+    /// Ferme les connexions des adresses bloquées.
+    pub fn kick(&self, banned: impl Fn(IpAddr) -> bool) {
+        let closed = json!({ "type": "closed", "reason": "banned" }).to_string();
+        let rooms = self.rooms.lock().unwrap();
+        for room in rooms.values() {
+            for m in room.members.values() {
+                if m.ip.is_some_and(&banned) {
+                    let _ = m.tx.try_send(closed.clone());
+                }
+            }
         }
     }
 
@@ -328,12 +400,12 @@ mod tests {
         assert_eq!(rooms.list("CAFÉ").len(), 1);
         assert!(rooms.list("thé").is_empty());
 
-        let mut ada = rooms.join(&id, "xa".into()).unwrap();
+        let mut ada = rooms.join(&id, "xa".into(), None, None).unwrap();
         let welcome = next(&mut ada);
         assert_eq!(welcome["type"], "welcome");
         assert!(welcome["peers"].as_array().unwrap().is_empty());
 
-        let mut bob = rooms.join(&id, "xb".into()).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, None).unwrap();
         let welcome = next(&mut bob);
         assert_eq!(welcome["peers"][0]["id"], ada.me);
         assert_eq!(welcome["peers"][0]["x"], "xa");
@@ -354,7 +426,7 @@ mod tests {
         assert_eq!(next(&mut bob)["type"], "key");
 
         // Qui arrive ensuite ne voit rien de ce qui précède.
-        let mut eve = rooms.join(&id, "xe".into()).unwrap();
+        let mut eve = rooms.join(&id, "xe".into(), None, None).unwrap();
         assert_eq!(next(&mut eve)["type"], "welcome");
         assert!(eve.inbox.try_recv().is_err());
 
@@ -366,7 +438,53 @@ mod tests {
         // Le dernier qui part emporte le salon.
         rooms.leave(&id, &ada.me);
         assert_eq!(rooms.count(), (0, 0));
-        assert!(rooms.join(&id, "x".into()).is_none());
+        assert!(rooms.join(&id, "x".into(), None, None).is_none());
+    }
+
+    #[test]
+    fn a_tag_finds_its_rooms_again() {
+        let rooms = Rooms::default();
+        let tag = "ab".repeat(32);
+        let secret = rooms.create("Secret", true, 0).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let public = rooms.create("Place", false, 0).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let _a = rooms.join(&secret, "xa".into(), None, Some(&tag)).unwrap();
+        let _b = rooms.join(&public, "xb".into(), None, None).unwrap();
+        let mine = rooms.mine(&tag);
+        assert_eq!(mine.len(), 1);
+        assert_eq!(mine[0]["id"], secret.as_str());
+        assert!(rooms.mine(&"cd".repeat(32)).is_empty());
+        assert!(!is_tag("pas une marque"));
+    }
+
+    #[test]
+    fn a_banned_address_is_disconnected() {
+        let rooms = Rooms::default();
+        let id = rooms.create("Place", false, 0).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let bad: IpAddr = "203.0.113.7".parse().unwrap();
+        let mut eve = rooms.join(&id, "xe".into(), Some(bad), None).unwrap();
+        let mut ada = rooms
+            .join(
+                &id,
+                "xa".into(),
+                Some("198.51.100.1".parse().unwrap()),
+                None,
+            )
+            .unwrap();
+        next(&mut eve);
+        next(&mut eve);
+        next(&mut ada);
+        rooms.kick(|ip| ip == bad);
+        assert_eq!(next(&mut eve)["reason"], "banned");
+        assert!(ada.inbox.try_recv().is_err());
     }
 
     #[test]
@@ -381,7 +499,7 @@ mod tests {
             rooms.list("nuit").is_empty(),
             "un salon privé n'est pas listé"
         );
-        let mut ada = rooms.join(&id, "xa".into()).unwrap();
+        let mut ada = rooms.join(&id, "xa".into(), None, None).unwrap();
         next(&mut ada);
         rooms.expire_now(&id);
         rooms.sweep();

@@ -13,6 +13,7 @@ use std::path::Path;
 
 use paquets::App;
 
+use crate::i18n::LANGS;
 use crate::{Site, assets, pages};
 
 /// Le site pour GitHub Pages, d'après `BASE_PATH` et `ALLEY_API_URL`.
@@ -53,11 +54,20 @@ pub async fn run(dir: &Path, site: &Site) -> std::io::Result<()> {
         std::fs::write(file, bytes)
     };
 
-    for (from, to) in [
-        ("/", "index.html"),
-        ("/app/", "app/index.html"),
-        ("/404", "404.html"),
-    ] {
+    let mut pages = vec![("/404".to_owned(), "404.html".to_owned())];
+    for lang in LANGS {
+        let home = lang.path("/");
+        let app = lang.path("/app/");
+        pages.push((
+            home.clone(),
+            format!("{}index.html", home.trim_start_matches('/')),
+        ));
+        pages.push((
+            app.clone(),
+            format!("{}index.html", app.trim_start_matches('/')),
+        ));
+    }
+    for (from, to) in &pages {
         let res = client.get(from).await;
         let csp = res
             .header("content-security-policy")
@@ -77,10 +87,12 @@ pub async fn run(dir: &Path, site: &Site) -> std::io::Result<()> {
     for (path, _, bytes) in assets::files() {
         write(path, bytes)?;
     }
-    write(
-        assets::MANIFEST_URL,
-        assets::manifest(site).to_json().as_bytes(),
-    )?;
+    for lang in LANGS {
+        write(
+            &assets::manifest_url(lang),
+            assets::manifest(site, lang).to_json().as_bytes(),
+        )?;
+    }
     // Les fichiers commençant par « _ » ou « . » passent tels quels.
     write(".nojekyll", b"")?;
     println!(

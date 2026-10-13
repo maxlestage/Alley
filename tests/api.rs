@@ -66,7 +66,22 @@ async fn rooms_are_found_by_name_and_private_ones_are_hidden() {
     assert_eq!(client.get("/api/v1/rooms/inconnu").await.status(), 404);
 
     for bad in [json!({ "name": "" }), json!({ "name": "x".repeat(41) })] {
-        assert_eq!(client.post("/api/v1/rooms").json(&bad).await.status(), 400);
+        let res = client.post("/api/v1/rooms").json(&bad).await;
+        assert_eq!(res.status(), 400);
+        assert_eq!(res.json::<Value>()["error"], "bad_name");
+    }
+    // Un nom de salon est public : ni sexe, ni drogue.
+    for (name, reason) in [("Porno gratuit", "sexual"), ("vente de cocaïne", "drugs")] {
+        let res = client
+            .post("/api/v1/rooms")
+            .json(&json!({ "name": name }))
+            .await;
+        assert_eq!(res.status(), 422, "{name}");
+        let body: Value = res.json();
+        assert_eq!(
+            (body["error"].as_str(), body["reason"].as_str()),
+            (Some("forbidden_name"), Some(reason))
+        );
     }
     let stats: Value = client.get("/api/v1/stats").await.json();
     assert_eq!(stats["messages_stored"], 0);
@@ -100,8 +115,12 @@ async fn serve() -> u16 {
 }
 
 async fn connect(port: u16, room: &str, identity: &Identity) -> Ws {
+    connect_with(port, room, identity, "").await
+}
+
+async fn connect_with(port: u16, room: &str, identity: &Identity, extra: &str) -> Ws {
     let x = crypto::b64url(&identity.public_raw());
-    let url = format!("ws://127.0.0.1:{port}/api/v1/rooms/{room}/live?x={x}");
+    let url = format!("ws://127.0.0.1:{port}/api/v1/rooms/{room}/live?x={x}{extra}");
     tokio_tungstenite::connect_async(url)
         .await
         .expect("connexion")
@@ -247,6 +266,129 @@ fn reqwest_like(
 }
 
 #[tokio::test]
+async fn a_password_finds_its_rooms_again_from_any_device() {
+    let port = serve().await;
+    let http = reqwest_like(port);
+    let room: Value = http(
+        "POST",
+        "/api/v1/rooms",
+        Some(json!({ "name": "Bureau", "private": true })),
+    )
+    .await;
+    let id = room["id"].as_str().unwrap().to_owned();
+    // La marque, tirée du pseudonyme et du mot de passe (ici sans PBKDF2 :
+    // c'est le navigateur qui le calcule).
+    let tag = crypto::account_tag(b"graine d'Ada");
+    let mut ada = connect_with(port, &id, &Identity::generate(), &format!("&t={tag}")).await;
+    assert_eq!(next(&mut ada).await["type"], "welcome");
+    // Depuis un autre appareil, la même marque retrouve le salon privé.
+    let mine: Value = http("POST", "/api/v1/mine", Some(json!({ "tag": tag }))).await;
+    assert_eq!(mine["rooms"][0]["id"], id.as_str());
+    let other: Value = http(
+        "POST",
+        "/api/v1/mine",
+        Some(json!({ "tag": crypto::account_tag(b"autre") })),
+    )
+    .await;
+    assert!(other["rooms"].as_array().unwrap().is_empty());
+    let bad: Value = http("POST", "/api/v1/mine", Some(json!({ "tag": "court" }))).await;
+    assert_eq!(bad["status"], 400);
+}
+
+/// Les modèles de modération sont-ils là (`cargo xtask models`) ?
+fn models_ready() -> bool {
+    let dir = alley::moderation::Moderation::models_dir();
+    let ok = dir.join("nsfw.onnx").exists() && dir.join("clip-visual.onnx").exists();
+    if !ok {
+        eprintln!("modèles absents : lancez `cargo xtask models` (test de modération sauté)");
+    }
+    ok
+}
+
+#[tokio::test]
+async fn an_image_is_checked_and_a_forbidden_one_blocks_the_address() {
+    if !models_ready() {
+        return;
+    }
+    let port = serve().await;
+    let http = reqwest_like(port);
+    let room: Value = http("POST", "/api/v1/rooms", Some(json!({ "name": "Photos" }))).await;
+    let id = room["id"].as_str().unwrap().to_owned();
+    let mut ada = connect(port, &id, &Identity::generate()).await;
+    next(&mut ada).await;
+    let mut bob = connect(port, &id, &Identity::generate()).await;
+    next(&mut bob).await;
+    next(&mut ada).await;
+    let room_key = crypto::generate_key();
+
+    let image = |jpeg: &[u8], mid: &str| {
+        let key = crypto::generate_key();
+        json!({
+            "type": "image",
+            "id": mid,
+            "key": crypto::b64(&key),
+            "c": crypto::seal_bytes_token(&key, jpeg),
+            "data": crypto::seal_token(
+                &room_key,
+                &json!({ "k": "msg", "kind": "image", "mid": mid, "ik": crypto::b64(&key) }).to_string(),
+            ),
+        })
+    };
+
+    // Une image ordinaire passe : Bob la reçoit avec l'empreinte de sa clé.
+    let ordinary = std::fs::read("tests/fixtures/ordinary.jpg").unwrap();
+    send(&mut ada, image(&ordinary, "m1")).await;
+    let got = next(&mut bob).await;
+    assert_eq!(got["type"], "relay");
+    let payload = crypto::open_token(&room_key, got["data"].as_str().unwrap()).unwrap();
+    let payload: Value = paquets::serde_json::from_str(&payload).unwrap();
+    let key: crypto::Key = crypto::unb64(payload["ik"].as_str().unwrap())
+        .unwrap()
+        .try_into()
+        .unwrap();
+    assert_eq!(got["kc"].as_str().unwrap(), crypto::key_commitment(&key));
+    assert_eq!(
+        crypto::open_bytes_token(&key, got["c"].as_str().unwrap()).unwrap(),
+        ordinary
+    );
+    assert_eq!(next(&mut ada).await["type"], "sent");
+
+    // Ce qui n'est pas une image JPEG est refusé, sans plus.
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    send(&mut ada, image(b"GIF89a pas une photo", "m2")).await;
+    let refused = next(&mut ada).await;
+    assert_eq!(
+        (refused["type"].as_str(), refused["reason"].as_str()),
+        (Some("moderated"), Some("invalid"))
+    );
+
+    // Une image montrant de la drogue : refusée, et l'adresse est bloquée.
+    tokio::time::sleep(Duration::from_millis(2100)).await;
+    let drugs = std::fs::read("tests/fixtures/drugs.jpg").unwrap();
+    send(&mut ada, image(&drugs, "m3")).await;
+    let refused = next(&mut ada).await;
+    assert_eq!(refused["type"], "moderated");
+    assert_eq!(refused["reason"], "drugs");
+    assert_eq!(refused["banned"], true);
+    // Toutes les connexions de l'adresse sont fermées (ici, Bob aussi : même
+    // machine), puis toutes ses requêtes refusées.
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match ada.next().await {
+                Some(Ok(Message::Close(Some(frame)))) => return u16::from(frame.code),
+                Some(Ok(_)) => continue,
+                _ => return 0,
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(closed, 4403);
+    let blocked: Value = http("GET", "/api/v1/rooms", None).await;
+    assert_eq!(blocked["status"], 403);
+}
+
+#[tokio::test]
 async fn an_unknown_room_refuses_the_connection() {
     let port = serve().await;
     let mut ws = connect(port, "inconnu", &Identity::generate()).await;
@@ -317,8 +459,9 @@ async fn the_site_and_the_installable_app_are_served() {
     let home = client.get("/").await;
     assert_eq!(home.status(), 200);
     let html = home.text();
-    assert!(html.contains("Discord"));
+    assert!(html.contains(r#"<html lang="fr""#), "{html}");
     assert!(html.contains(r#"<link rel="manifest" href="/manifest.webmanifest"/>"#));
+    assert!(html.contains(r#"hreflang="en" href="/en/""#));
     assert!(html.contains("apple-mobile-web-app-capable"));
     assert!(html.contains("viewport-fit=cover"));
 
@@ -348,6 +491,28 @@ async fn the_site_and_the_installable_app_are_served() {
     );
     assert_eq!(client.get("/app").await.status(), 200);
 
+    // En anglais et en espagnol aussi, du premier au dernier mot.
+    for (path, lang, words) in [
+        ("/en/", "en", "Talk. At midnight"),
+        ("/es/", "es", "A medianoche, todo se borra."),
+        ("/en/app/", "en", "Opening Alley…"),
+        ("/es/app/", "es", "Abriendo Alley…"),
+    ] {
+        let page = client.get(path).await;
+        assert_eq!(page.status(), 200, "{path}");
+        let html = page.text();
+        assert!(html.contains(&format!(r#"<html lang="{lang}""#)), "{path}");
+        assert!(html.contains(words), "{path}");
+        assert!(
+            !html.contains("Ouvrir Alley"),
+            "{path} : du français oublié"
+        );
+    }
+    let manifest: Value = client.get("/es/manifest.webmanifest").await.json();
+    assert_eq!(
+        (manifest["lang"].as_str(), manifest["start_url"].as_str()),
+        (Some("es"), Some("/es/app/"))
+    );
     let manifest: Value = client.get("/manifest.webmanifest").await.json();
     assert_eq!(manifest["start_url"], "/app/");
     assert_eq!(manifest["display"], "standalone");
@@ -396,6 +561,10 @@ async fn the_github_pages_export_is_complete() {
     assert!(app.contains(r#"<meta name="alley-api" content="https://alley.example"/>"#));
     assert!(read("index.html").contains(r#"href="/Alley/app/""#));
     assert!(read("404.html").contains("nulle part"));
+    assert!(read("404.html").contains("leads nowhere"));
+    assert!(read("en/index.html").contains(r#"href="/Alley/en/app/""#));
+    assert!(read("es/app/index.html").contains(r#"<html lang="es""#));
+    assert!(dir.join("en/manifest.webmanifest").exists());
     let manifest: Value = paquets::serde_json::from_str(&read("manifest.webmanifest")).unwrap();
     assert_eq!(manifest["start_url"], "/Alley/app/");
     assert!(read("assets/site.css").starts_with(":root{"));

@@ -21,6 +21,7 @@ base64 = "0.22"
 rand_core = { version = "0.6", features = ["getrandom"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+alley-moderation = { path = "../moderation" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
@@ -38,6 +39,9 @@ web-sys = { version = "0.3", features = [
   "BlobPropertyBag",
   "CanvasRenderingContext2d",
   "CloseEvent",
+  "CredentialsContainer",
+  "Crypto",
+  "CryptoKey",
   "CssStyleDeclaration",
   "DisplayMediaStreamConstraints",
   "Document",
@@ -78,6 +82,7 @@ web-sys = { version = "0.3", features = [
   "Node",
   "NodeList",
   "Notification",
+  "Pbkdf2Params",
   "NotificationOptions",
   "NotificationPermission",
   "RequestInit",
@@ -103,6 +108,7 @@ web-sys = { version = "0.3", features = [
   "RtcSignalingState",
   "RtcTrackEvent",
   "ServiceWorkerContainer",
+  "SubtleCrypto",
   "ServiceWorkerRegistration",
   "CacheStorage",
   "RegistrationOptions",

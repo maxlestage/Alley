@@ -8,6 +8,7 @@ use std::rc::Rc;
 use wasm_bindgen::JsValue;
 
 use crate::dom::*;
+use crate::i18n::{self, Lang, t};
 
 fn detect_os() -> Option<&'static str> {
     let nav = window().navigator();
@@ -38,8 +39,48 @@ fn detect_os() -> Option<&'static str> {
     }
 }
 
+const LANG_KEY: &str = "alley.lang";
+
+/// La langue de la vitrine : celle de la page. À la première visite de la
+/// page française, un navigateur réglé en anglais ou en espagnol est envoyé
+/// vers sa langue ; un choix fait dans le sélecteur est retenu.
+fn choose_lang() -> Lang {
+    let page = document()
+        .document_element()
+        .and_then(|e| e.get_attribute("lang"))
+        .and_then(|l| Lang::parse(&l))
+        .unwrap_or(Lang::Fr);
+    let storage = window().local_storage().ok().flatten();
+    for link in query_all("[data-lang]") {
+        let storage = storage.clone();
+        let code = link.get_attribute("data-lang").unwrap_or_default();
+        listen_forever(&link, "click", move |_| {
+            if let Some(s) = &storage {
+                let _ = s.set_item(LANG_KEY, &code);
+            }
+        });
+    }
+    let saved = storage
+        .as_ref()
+        .and_then(|s| s.get_item(LANG_KEY).ok().flatten())
+        .and_then(|l| Lang::parse(&l));
+    let browser = window()
+        .navigator()
+        .language()
+        .and_then(|l| Lang::parse(&l));
+    let wanted = saved.or(browser).unwrap_or(page);
+    if page == Lang::Fr && wanted != Lang::Fr {
+        let base = meta("alley-base");
+        let _ = window()
+            .location()
+            .replace(&format!("{base}{}/", wanted.prefix()));
+    }
+    page
+}
+
 pub fn start() {
     crate::app::retire_worker();
+    i18n::set_lang(choose_lang());
     let os = detect_os();
     if let Some(os) = os
         && let Some(card) = query(&format!(".platform[data-os=\"{os}\"]"))
@@ -55,11 +96,9 @@ pub fn start() {
     let standalone = matches_media("(display-mode: standalone)")
         || get(&window().navigator(), "standalone").as_bool() == Some(true);
     if standalone {
-        hint.set_text_content(Some("Alley est déjà installé sur cet appareil ✨"));
+        hint.set_text_content(Some(t().installed_already));
     } else if os == Some("ios") {
-        hint.set_text_content(Some(
-            "Sur iPhone et iPad : ouvrez cette page dans Safari, touchez Partager ⎋ puis « Sur l'écran d'accueil ».",
-        ));
+        hint.set_text_content(Some(t().install_ios));
     }
     let deferred: Rc<RefCell<Option<JsValue>>> = Rc::new(RefCell::new(None));
     {
@@ -68,7 +107,7 @@ pub fn start() {
             e.prevent_default();
             *deferred.borrow_mut() = Some(e.into());
             let _ = button.remove_attribute("hidden");
-            hint.set_text_content(Some("Un clic, et Alley s'ouvre dans sa propre fenêtre."));
+            hint.set_text_content(Some(t().install_one_click));
         });
     }
     {
@@ -82,8 +121,6 @@ pub fn start() {
         });
     }
     listen_forever(&window(), "appinstalled", move |_| {
-        hint.set_text_content(Some(
-            "Alley est installé ✨ Retrouvez-le avec vos autres applications.",
-        ));
+        hint.set_text_content(Some(t().installed_now));
     });
 }

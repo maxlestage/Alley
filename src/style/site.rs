@@ -468,6 +468,34 @@ pub fn site() -> String {
         ],
     );
     s.rule(".bottom p", &[("margin", "0")]);
+    // Les trois langues.
+    s.rule(
+        "nav.langs",
+        &[("display", "flex"), ("gap", "4px"), ("font-size", "13px")],
+    );
+    s.rule(
+        "nav.langs a",
+        &[
+            ("display", "inline-block"),
+            ("padding", "4px 8px"),
+            ("border-radius", "8px"),
+            ("color", "var(--muted)"),
+            ("text-decoration", "none"),
+            ("font-weight", "700"),
+        ],
+    );
+    s.rule(
+        "nav.langs a[aria-current]",
+        &[("background", "var(--card)"), ("color", "var(--fg)")],
+    );
+    s.rule(
+        ".notfound > div",
+        &[
+            ("display", "grid"),
+            ("gap", "10px"),
+            ("justify-items", "center"),
+        ],
+    );
     s.rule(".bottom nav", &[("display", "flex"), ("gap", "20px")]);
     s.rule(
         ".notfound",
@@ -481,6 +509,11 @@ pub fn site() -> String {
         s.rule(".hero", &[("grid-template-columns", "1fr")]);
         s.rule(".pane.server", &[("transform", "none")]);
         s.rule(".top nav a:not(.button)", &[("display", "none")]);
+        s.rule(
+            ".top nav.langs a:not(.button)",
+            &[("display", "inline-block")],
+        );
+        s.rule(".top", &[("flex-wrap", "wrap")]);
     });
     s.css()
 }

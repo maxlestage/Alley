@@ -41,6 +41,8 @@ pub struct Msg {
     pub reply: String,
     pub edited: bool,
     pub mine: bool,
+    /// Une photo à moi que le serveur vérifie encore.
+    pub pending: bool,
 }
 
 /// La connexion temps réel au salon, avec ses écouteurs.
@@ -66,7 +68,7 @@ pub struct Room {
     pub peers: BTreeMap<String, Peer>,
     pub msgs: Vec<Msg>,
     /// Ce qui est arrivé avant la clé.
-    pub pending: Vec<(String, String)>,
+    pub pending: Vec<Value>,
     pub socket: Option<Socket>,
     /// Le jour local d'arrivée : à minuit, tout s'efface.
     pub day: (u32, u32, u32),
@@ -96,7 +98,9 @@ impl Room {
         self.peers
             .get(id)
             .and_then(|p| p.name.clone())
-            .unwrap_or_else(|| format!("Invité {}", &id[..id.len().min(4)]))
+            .unwrap_or_else(|| {
+                crate::i18n::fill(crate::i18n::t().guest_name, &[&id[..id.len().min(4)]])
+            })
     }
 
     /// Suis-je parmi les trois plus anciens (ceux qui remettent la clé) ?
@@ -131,11 +135,25 @@ impl Room {
     }
 }
 
+/// Un compte : pseudonyme + mot de passe. Le navigateur garde le mot de
+/// passe (son gestionnaire de mots de passe) ; l'application n'en garde que
+/// la marque, le temps de la visite.
+#[derive(Clone)]
+pub struct Account {
+    pub tag: String,
+}
+
 /// Toute l'application.
 #[derive(Default)]
 pub struct App {
     /// Le pseudonyme, le temps de la visite.
     pub name: String,
+    /// Le compte, si l'on s'est connecté avec un mot de passe.
+    pub account: Option<Account>,
+    /// Les salons ouverts de ce compte.
+    pub mine: Vec<Value>,
+    /// Bloqué par la modération : plus rien n'est possible.
+    pub banned: bool,
     /// Une adresse de serveur saisie à la main (jamais enregistrée).
     pub server: String,
     pub rooms: Vec<Value>,

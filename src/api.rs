@@ -5,7 +5,8 @@
 //! | `GET /rooms?q=` | les salons publics ouverts, filtrés par nom |
 //! | `POST /rooms` | crée un salon (`{name, private, tz}`) ou rejoint celui de ce nom |
 //! | `GET /rooms/:id` | un salon (pour un lien de salon privé) |
-//! | `GET /rooms/:id/live?x=` | le salon en direct (WebSocket) |
+//! | `POST /mine` | les salons ouverts d'une marque (`{tag}`, compte connecté) |
+//! | `GET /rooms/:id/live?x=&t=` | le salon en direct (WebSocket) |
 //! | `GET /ice` | les serveurs STUN/TURN des appels |
 //! | `GET /stats` | ce que voit le serveur : des nombres |
 //!
@@ -14,18 +15,32 @@
 //! - `{"type":"relay","data":"[[BROCOLIS:v1:…]]","to":?}` : un jeton chiffré
 //!   pour tous les autres, ou pour une seule personne (signalisation d'appel) ;
 //! - `{"type":"key","to":…,"blob":…}` : la clé du salon, emballée pour un
-//!   nouvel arrivant avec sa clé publique X25519.
+//!   nouvel arrivant avec sa clé publique X25519 ;
+//! - `{"type":"image","id":…,"key":…,"c":…,"data":…}` : une image, que le
+//!   serveur vérifie avant de la relayer ([`crate::moderation`]).
 //!
 //! Le serveur répond par `welcome`, `joined`, `left`, `relay` (avec `from`),
-//! `key` et `closed`. Il ne garde rien.
+//! `key`, `sent` / `moderated` (le sort d'une image) et `closed`. Il ne garde
+//! rien.
+//!
+//! Les erreurs sont `{"error": code}` : le navigateur les traduit.
 
 use std::time::{Duration, Instant};
 
 use paquets::prelude::*;
 use serde_json::Value;
 
-use crate::protocol::{MAX_TOKEN, WRAPPED_KEY_LEN, is_b64_len, is_token, public_key_from_url};
-use crate::rooms::{self, Rooms};
+use crate::moderation::{Moderation, Verdict, check_text};
+use crate::protocol::{
+    MAX_TOKEN, WRAPPED_KEY_LEN, is_b64_len, is_token, key_commitment, key_from_b64, open_token,
+    public_key_from_url,
+};
+use crate::rooms::{self, Rooms, is_tag};
+
+/// Une erreur que le navigateur traduit : `{"error": code}`.
+fn fail(status: u16, code: &str) -> (u16, Json<Value>) {
+    (status, Json(json!({ "error": code })))
+}
 
 #[data]
 pub struct NewRoom {
@@ -50,30 +65,54 @@ async fn list(req: Request) -> Json<Value> {
     Json(json!({ "rooms": rooms.list(&q) }))
 }
 
+#[data]
+pub struct Mine {
+    pub tag: String,
+}
+
 /// `POST /api/v1/rooms`
-async fn create(req: Request) -> Result<(u16, Json<Value>)> {
-    let body: NewRoom = req.json().await?;
+async fn create(req: Request) -> (u16, Json<Value>) {
+    let Ok(body) = req.json::<NewRoom>().await else {
+        return fail(400, "bad_request");
+    };
     let rooms = req.state::<Rooms>();
     rooms.sweep();
     if rooms::clean_name(&body.name).is_none() {
-        return Err(Error::bad_request(format!(
-            "le nom d'un salon fait de 1 à {} caractères",
-            rooms::MAX_NAME
-        )));
+        return fail(400, "bad_name");
     }
-    let room = rooms
-        .create(&body.name, body.private, body.tz)
-        .ok_or_else(|| Error::new(503, "trop de salons ouverts, réessayez plus tard"))?;
-    Ok((201, Json(room)))
+    // Le nom d'un salon est public : il ne peut pas être sexuel ni parler
+    // de drogue.
+    if let Some(category) = check_text(&body.name) {
+        return (
+            422,
+            Json(json!({ "error": "forbidden_name", "reason": category.code() })),
+        );
+    }
+    match rooms.create(&body.name, body.private, body.tz) {
+        Some(room) => (201, Json(room)),
+        None => fail(503, "too_many_rooms"),
+    }
+}
+
+/// `POST /api/v1/mine` : les salons ouverts d'une marque.
+async fn mine(req: Request) -> (u16, Json<Value>) {
+    match req.json::<Mine>().await {
+        Ok(body) if is_tag(&body.tag) => {
+            let rooms = req.state::<Rooms>();
+            rooms.sweep();
+            (200, Json(json!({ "rooms": rooms.mine(&body.tag) })))
+        }
+        _ => fail(400, "bad_request"),
+    }
 }
 
 /// `GET /api/v1/rooms/:id`
-async fn show(req: Request) -> Result<Json<Value>> {
+async fn show(req: Request) -> (u16, Json<Value>) {
     let id = req.param("id").unwrap_or_default();
-    req.state::<Rooms>()
-        .info(id)
-        .map(Json)
-        .ok_or_else(|| Error::not_found("ce salon n'existe plus"))
+    match req.state::<Rooms>().info(id) {
+        Some(room) => (200, Json(room)),
+        None => fail(404, "room_gone"),
+    }
 }
 
 /// `GET /api/v1/stats` : ce que le serveur voit.
@@ -105,14 +144,21 @@ async fn ice(_req: Request) -> Json<Value> {
 }
 
 /// Le salon en direct : `GET /api/v1/rooms/:id/live?x=<clé publique X25519,
-/// base64url>`.
+/// base64url>&t=<marque, si connecté>`.
 async fn live(req: Request, socket: ws::WebSocket) {
     let id = req.param("id").unwrap_or_default().to_owned();
     let x = req.query("x").and_then(|x| public_key_from_url(&x));
+    let tag = req.query("t").map(|t| t.into_owned());
+    let ip = req.ip();
     let mut socket = socket;
+    let moderation = req.state::<Moderation>().clone();
+    if ip.is_some_and(|ip| moderation.is_banned(ip)) {
+        let _ = socket.close(4403, "banned").await;
+        return;
+    }
     let rooms = req.state::<Rooms>();
     rooms.sweep();
-    let Some(joined) = x.and_then(|x| rooms.join(&id, x)) else {
+    let Some(joined) = x.and_then(|x| rooms.join(&id, x, ip, tag.as_deref())) else {
         let _ = socket.close(4404, "salon introuvable ou complet").await;
         return;
     };
@@ -130,8 +176,10 @@ async fn live(req: Request, socket: ws::WebSocket) {
                 event = inbox.recv() => match event {
                     Some(event) => {
                         let closing = event.contains("\"type\":\"closed\"");
+                        let banned = closing && event.contains("\"reason\":\"banned\"");
                         if tx.send(event).await.is_err() || closing {
-                            let _ = tx.close(4000, "salon fermé").await;
+                            let code = if banned { 4403 } else { 4000 };
+                            let _ = tx.close(code, "salon fermé").await;
                             break;
                         }
                     }
@@ -152,6 +200,8 @@ async fn live(req: Request, socket: ws::WebSocket) {
 
     let mut window = Instant::now();
     let mut sent = 0u32;
+    let mut last_image: Option<Instant> = None;
+    let mut banned = false;
     while let Some(Ok(message)) = rx.recv().await {
         if forward.is_finished() {
             break;
@@ -186,16 +236,100 @@ async fn live(req: Request, socket: ws::WebSocket) {
                     rooms.hand_key(&id, &me, to, blob);
                 }
             }
+            Some("image") => {
+                // Une image toutes les 2 secondes au plus : la vérifier
+                // occupe le serveur.
+                if last_image.is_some_and(|t| t.elapsed() < Duration::from_secs(2)) {
+                    let mid = value["id"].as_str().unwrap_or_default();
+                    rooms.notify(
+                        &id,
+                        &me,
+                        &json!({ "type": "moderated", "id": mid, "reason": "slow_down" }),
+                    );
+                    continue;
+                }
+                last_image = Some(Instant::now());
+                if image(&value, &id, &me, ip, rooms, &moderation).await {
+                    banned = true;
+                    break;
+                }
+            }
             _ => {}
         }
     }
-    forward.abort();
+    if banned {
+        // Le refus, puis la fermeture (4403) : on laisse partir les deux.
+        let _ = tokio::time::timeout(Duration::from_secs(3), forward).await;
+    } else {
+        forward.abort();
+    }
     rooms.leave(&id, &me);
+}
+
+/// Vérifie une image puis la relaie, ou la refuse ; une image à caractère
+/// sexuel ou montrant de la drogue bloque l'adresse de l'expéditeur.
+/// Renvoie `true` si la connexion doit être fermée.
+async fn image(
+    value: &Value,
+    id: &str,
+    me: &str,
+    ip: Option<std::net::IpAddr>,
+    rooms: &Rooms,
+    moderation: &Moderation,
+) -> bool {
+    let mid = value["id"].as_str().unwrap_or_default();
+    let refuse = |reason: &str, banned: bool| {
+        rooms.notify(
+            id,
+            me,
+            &json!({ "type": "moderated", "id": mid, "reason": reason, "banned": banned }),
+        );
+    };
+    let (Some(key), Some(c), Some(data)) = (
+        value["key"].as_str().and_then(key_from_b64),
+        value["c"].as_str().filter(|c| is_token(c, MAX_TOKEN)),
+        value["data"].as_str().filter(|d| is_token(d, 64 * 1024)),
+    ) else {
+        refuse("invalid", false);
+        return false;
+    };
+    let Some(jpeg) = open_token(&key, c) else {
+        refuse("invalid", false);
+        return false;
+    };
+    match moderation.judge(jpeg).await {
+        Verdict::Clean => {
+            rooms.relay_image(id, me, data, c, &key_commitment(&key));
+            rooms.notify(id, me, &json!({ "type": "sent", "id": mid }));
+            false
+        }
+        Verdict::Refused(category) => {
+            refuse(category.code(), false);
+            false
+        }
+        Verdict::Banned(category) => {
+            refuse(category.code(), true);
+            if let Some(ip) = ip {
+                moderation.ban(ip);
+                rooms.kick(|other| moderation.is_banned(other));
+            }
+            true
+        }
+        Verdict::Invalid => {
+            refuse("invalid", false);
+            false
+        }
+        Verdict::Unavailable => {
+            refuse("unavailable", false);
+            false
+        }
+    }
 }
 
 pub fn routes(app: &mut App) {
     app.get("/api/v1/rooms", list);
     app.post("/api/v1/rooms", create);
+    app.post("/api/v1/mine", mine);
     app.get("/api/v1/rooms/:id", show);
     app.ws("/api/v1/rooms/:id/live", live);
     app.get("/api/v1/ice", ice);

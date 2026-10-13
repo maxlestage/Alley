@@ -1,7 +1,11 @@
 //! **Alley** : des salons de discussion éphémères, chiffrés de bout en bout.
 //!
-//! - **un pseudonyme, et c'est tout** : pas de compte, rien n'est enregistré,
-//!   ni sur l'appareil ni sur le serveur ;
+//! - **un pseudonyme suffit** ; avec un mot de passe (retenu par le
+//!   navigateur, jamais envoyé), on retrouve ses salons sur tous ses
+//!   appareils. Rien n'est enregistré, ni sur l'appareil ni sur le serveur ;
+//! - le contenu sexuel et la drogue sont interdits ; une image interdite
+//!   bloque l'adresse IP de son auteur ([`moderation`]) ;
+//! - en français, en anglais et en espagnol ([`i18n`]) ;
 //! - **un salon ne vit que tant que quelqu'un y est**, et disparaît à minuit
 //!   dans le pays de celui qui l'a créé ([`rooms`]) ; qui arrive ne voit rien
 //!   de ce qui s'est dit avant ;
@@ -19,6 +23,8 @@
 pub mod api;
 pub mod assets;
 pub mod export;
+pub mod i18n;
+pub mod moderation;
 pub mod pages;
 pub mod protocol;
 pub mod rooms;
@@ -27,6 +33,7 @@ pub mod style;
 use paquets::App;
 use paquets::securite::prelude::*;
 
+use crate::moderation::Moderation;
 use crate::rooms::Rooms;
 
 /// Corps de requête maximal : la création d'un salon. Les messages passent
@@ -94,7 +101,13 @@ pub fn shield() -> Shield {
         cors = cors.allow_origin(&origin);
         csrf = csrf.trusted_origin(&origin);
     }
-    paquets::shield()
+    let mut shield = paquets::shield();
+    if behind_proxy() {
+        // L'adresse du client est la dernière de `X-Forwarded-For` : sans
+        // cela, c'est le proxy qui serait bloqué à la place d'un fautif.
+        shield = shield.client_ip(ClientIpSource::XForwardedFor { trusted_hops: 0 });
+    }
+    shield
         .guard(HttpsRedirect::new())
         .guard(cors)
         .guard(csrf)
@@ -104,12 +117,54 @@ pub fn shield() -> Shield {
         .build()
 }
 
+/// Derrière le proxy d'un hébergeur (Heroku, Render, Fly.io), ou si
+/// `ALLEY_BEHIND_PROXY` est défini.
+pub fn behind_proxy() -> bool {
+    ["DYNO", "RENDER", "FLY_APP_NAME", "ALLEY_BEHIND_PROXY"]
+        .iter()
+        .any(|v| std::env::var_os(v).is_some())
+}
+
+/// Le registre des adresses bloquées : seulement ce qu'y met la modération
+/// (`AutoBan` ne compte aucune autre faute).
+fn blocked_addresses() -> paquets::securite::prelude::AutoBan {
+    paquets::securite::prelude::AutoBan::new()
+        .statuses([])
+        .max_strikes(u32::MAX)
+        .max_ban(std::time::Duration::from_secs(365 * 24 * 3600))
+}
+
 /// L'application complète : bouclier, API, pages, fichiers et PWA. Les tests
 /// construisent exactement la même avec `app().test()`.
 pub fn app() -> App {
     let mut app = App::new();
+    // Derrière le routeur d'un hébergeur, l'adresse du client est la
+    // dernière de `X-Forwarded-For` (comme le bouclier la lit).
+    if behind_proxy() {
+        app.trust_proxy(1);
+    }
+    let moderation = Moderation::new(blocked_addresses());
+    moderation.load_in_background();
     app.security(shield());
     app.body_limit(BODY_LIMIT);
+    app.state(moderation);
+    // Les adresses bloquées par la modération : toutes leurs requêtes sont
+    // refusées, avec une réponse que le navigateur sait lire (et traduire),
+    // même depuis GitHub Pages (le bouclier y ajoute les en-têtes CORS).
+    app.middleware(
+        |req: paquets::vitesse::Request, next: paquets::vitesse::Next| async move {
+            let banned = req
+                .ip()
+                .is_some_and(|ip| req.state::<Moderation>().is_banned(ip));
+            if banned {
+                return paquets::vitesse::Response::new()
+                    .status(403)
+                    .header("cache-control", "no-store")
+                    .json(serde_json::json!({ "error": "banned" }));
+            }
+            next.run(req).await
+        },
+    );
     // Les salons, en mémoire seulement : rien n'est enregistré.
     app.state(Rooms::default());
     api::routes(&mut app);
