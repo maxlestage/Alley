@@ -56,3 +56,31 @@ test("la clé survit au lien d'invitation", () => {
   const raw = generateKey();
   assert.deepEqual(fromB64Url(toB64Url(raw)), raw);
 });
+
+test("X25519 : mêmes clés publiques et même clé d'emballage que Brocolis", async () => {
+  const { identityFromRaw, wrapKeyBytes, unwrapGroupKey, wrapGroupKey, newIdentity, toB64 } = await import("./brocolis.js");
+  const alice = await identityFromRaw(new Uint8Array(32).fill(1));
+  const bob = await identityFromRaw(new Uint8Array(32).fill(2));
+  assert.equal(alice.pub, "pOCSkrZRwni5dyxWn1+puxPZBrRqtoyd+dwrRAn4ogk=");
+  const k = await wrapKeyBytes(alice, bob.pub);
+  assert.equal(toB64(k), "rv+EmjbG8ZYNWUlwkDV57/YVEL9zkAScnM6iKz0T+UM=");
+  assert.equal(toB64(await wrapKeyBytes(bob, alice.pub)), toB64(k));
+  // Une clé emballée par Brocolis se déballe ici.
+  const blob = "81p2c6nvKV6OSrdquUov4sR9A5t47pJNiL7Jp8fiFhB7ar7PZf8em8dWQKxQqu/NP/BohUyZB0nEsJ5M";
+  assert.deepEqual(await unwrapGroupKey(bob, blob, alice.pub), new Uint8Array(32).fill(9));
+  // Et un tiers n'y arrive pas.
+  const eve = await newIdentity();
+  assert.equal(await unwrapGroupKey(eve, blob, alice.pub), null);
+  const again = await wrapGroupKey(alice, new Uint8Array(32).fill(5), bob.pub);
+  assert.deepEqual(await unwrapGroupKey(bob, again, alice.pub), new Uint8Array(32).fill(5));
+});
+
+test("signatures : valides pour leur auteur seulement", async () => {
+  const { newSigner, sign, verify } = await import("./brocolis.js");
+  const ada = await newSigner();
+  const bob = await newSigner();
+  const sig = await sign(ada, "bonjour");
+  assert.ok(await verify(ada.pub, sig, "bonjour"));
+  assert.equal(await verify(ada.pub, sig, "bonjouR"), false);
+  assert.equal(await verify(bob.pub, sig, "bonjour"), false);
+});
