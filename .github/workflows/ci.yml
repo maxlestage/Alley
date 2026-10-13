@@ -17,6 +17,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
   rust:
@@ -29,7 +30,14 @@ jobs:
           components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --all --check
+      # Paquets est un dépôt privé : sans copie en cache, cargo a besoin d'un
+      # jeton qui peut le lire (secret PAQUETS_TOKEN, facultatif).
+      - name: Accès à Paquets
+        env:
+          PAQUETS_TOKEN: ${{ secrets.PAQUETS_TOKEN }}
+        if: env.PAQUETS_TOKEN != ''
+        run: git config --global url."https://x-access-token:${PAQUETS_TOKEN}@github.com/maxlestage/".insteadOf "https://github.com/maxlestage/"
+      - run: cargo fmt --all --check && cargo fmt --manifest-path xtask/Cargo.toml --check
       - name: Le navigateur, en WebAssembly
         run: cargo xtask web
       - name: Modèles de modération (en cache)
@@ -40,7 +48,7 @@ jobs:
       - run: cargo xtask models
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p alley-web --target wasm32-unknown-unknown -- -D warnings
-      - run: cargo clippy -p xtask --features prompts -- -D warnings
+      - run: cargo clippy --manifest-path xtask/Cargo.toml --features prompts -- -D warnings
       - name: Tests (API, chiffrement Brocolis recoupé, rotation, CORS, HTTPS, export)
         run: cargo test --workspace
 

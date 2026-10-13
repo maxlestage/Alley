@@ -10,7 +10,10 @@ build = "build.rs"
 # Le navigateur (`client/`, Rust compilé en WebAssembly) vit dans le même
 # espace de travail.
 [workspace]
-members = ["client", "moderation", "xtask"]
+members = ["client", "moderation"]
+# Les outils (`cargo xtask`) ont leur propre espace : ils se construisent sans
+# le reste (ni Paquets), par exemple pour fusionner ou déployer.
+exclude = ["xtask"]
 
 [[bin]]
 name = "alley"

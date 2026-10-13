@@ -6,6 +6,9 @@ rust-version = "1.88"
 description = "Les tâches d'Alley, en Rust : compilation du navigateur, modèles de modération, déploiement"
 publish = false
 
+# Un espace de travail à part : voir le Cargo.toml de la racine.
+[workspace]
+
 [dependencies]
 # Le générateur de wasm-bindgen, en bibliothèque : pas d'outil à installer.
 # Même version que la crate wasm-bindgen de client/.
