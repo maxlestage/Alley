@@ -107,16 +107,16 @@ fn load_prompts() -> Result<Vec<(Group, Vec<f32>)>, String> {
     if rest.len() != PROMPTS.len() * DIM * 4 {
         return Err("prompts.bin : taille inattendue".into());
     }
+    let floats: Vec<f32> = rest
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
     Ok(PROMPTS
         .iter()
-        .zip(rest.chunks_exact(DIM * 4))
-        .map(|((group, _), chunk)| {
-            let v = chunk
-                .chunks_exact(4)
-                .map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-                .collect();
-            (*group, v)
-        })
+        .zip(floats.chunks(DIM))
+        .map(|((group, _), v)| (*group, v.to_vec()))
         .collect())
 }
 
