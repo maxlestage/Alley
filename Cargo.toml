@@ -1,0 +1,31 @@
+[package]
+name = "alley"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Alley : l'équivalent de Discord où tout est chiffré de bout en bout (protocole Brocolis), servi par une App Paquets"
+publish = false
+
+[[bin]]
+name = "alley"
+path = "src/main.rs"
+
+[dependencies]
+# Le framework full-stack : Vitesse (le web, WebSocket) + Securite (le bouclier)
+# + Memoire (les données) + Active (les pages, la PWA).
+paquets = { git = "https://github.com/maxlestage/Paquets" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+
+[dev-dependencies]
+# Les tests chiffrent comme le navigateur (et l'app Brocolis) pour vérifier
+# que le serveur ne voit passer que des jetons.
+aes-gcm = "0.10"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
