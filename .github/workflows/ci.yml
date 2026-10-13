@@ -30,7 +30,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - name: Le navigateur, en WebAssembly
-        run: scripts/wasm-bindgen.sh && scripts/web.sh
+        run: cargo xtask web
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo clippy -p alley-web --target wasm32-unknown-unknown -- -D warnings
       - name: Tests (API, chiffrement Brocolis recoupé, rotation, CORS, HTTPS, export)

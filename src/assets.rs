@@ -1,29 +1,54 @@
 //! Les fichiers du navigateur, compilés dans le programme (aucun dossier à
 //! déployer à côté), et ce qui rend Alley **installable** sur tous les
-//! systèmes : le manifeste d'application web et le service worker, construits
-//! avec le module `pwa` d'Active.
+//! systèmes : le manifeste d'application web, construit avec le module `pwa`
+//! d'Active.
 //!
-//! Le service worker garde l'application (page, WebAssembly, styles, icônes) pour
-//! qu'elle s'ouvre même sans réseau, et laisse toujours passer l'API au réseau.
+//! Pas de service worker : un salon n'existe que tant que quelqu'un y est
+//! connecté, il n'y a rien à ouvrir hors ligne. Les adresses des fichiers
+//! portent la version de l'application (`?v=…`) : un navigateur ne garde
+//! jamais un ancien fichier après une mise à jour.
 
-use paquets::active::pwa::{Manifest, ServiceWorker, version};
+use std::borrow::Cow;
+use std::sync::LazyLock;
+
+use paquets::active::pwa::{Manifest, version};
 use paquets::prelude::*;
 use paquets::vitesse::{Response, header};
 
-use crate::Site;
+use crate::{Site, style};
 
-/// `(chemin, type, contenu)` de chaque fichier servi sous `/assets/`.
-pub const FILES: &[(&str, &str, &[u8])] = &[
-    (
-        "/assets/site.css",
-        "text/css; charset=utf-8",
-        include_bytes!("../web/site.css"),
-    ),
-    (
-        "/assets/app.css",
-        "text/css; charset=utf-8",
-        include_bytes!("../web/app.css"),
-    ),
+/// `(chemin, type, contenu)` d'un fichier servi sous `/assets/`.
+pub type File = (&'static str, &'static str, Cow<'static, [u8]>);
+
+/// Les styles, écrits en Rust (`src/style/`) et rendus une fois.
+static FILES: LazyLock<Vec<File>> = LazyLock::new(|| {
+    let css = "text/css; charset=utf-8";
+    let mut files: Vec<File> = vec![
+        (
+            "/assets/site.css",
+            css,
+            Cow::Owned(style::site().into_bytes()),
+        ),
+        (
+            "/assets/app.css",
+            css,
+            Cow::Owned(style::app().into_bytes()),
+        ),
+    ];
+    files.extend(
+        STATIC
+            .iter()
+            .map(|(path, kind, bytes)| (*path, *kind, Cow::Borrowed(*bytes))),
+    );
+    files
+});
+
+/// Chaque fichier servi sous `/assets/`.
+pub fn files() -> &'static [File] {
+    &FILES
+}
+
+const STATIC: &[(&str, &str, &[u8])] = &[
     // Le navigateur, en Rust compilé en WebAssembly (`client/`), et la colle
     // générée par wasm-bindgen pour le charger.
     (
@@ -67,15 +92,29 @@ pub const FILES: &[(&str, &str, &[u8])] = &[
 pub const WASM_JS: &str = "/assets/alley_web.js";
 pub const WASM: &str = "/assets/alley_web_bg.wasm";
 
-/// Le navigateur a-t-il été compilé (`scripts/web.sh`) ?
+/// Le navigateur a-t-il été compilé (`cargo xtask web`) ?
 pub fn has_wasm() -> bool {
-    FILES
+    files()
         .iter()
         .any(|(path, _, bytes)| *path == WASM && !bytes.is_empty())
 }
 
+/// La version de l'application : change dès qu'un fichier change.
+pub fn build_version() -> &'static str {
+    static VERSION: LazyLock<String> = LazyLock::new(|| {
+        let mut parts: Vec<&[u8]> = files().iter().map(|(_, _, bytes)| &bytes[..]).collect();
+        parts.push(env!("CARGO_PKG_VERSION").as_bytes());
+        version(parts)
+    });
+    &VERSION
+}
+
+/// L'adresse d'un fichier de `/assets/`, avec la version de l'application.
+pub fn versioned(site: &Site, path: &str) -> String {
+    format!("{}?v={}", site.url(path), build_version())
+}
+
 pub const MANIFEST_URL: &str = "/manifest.webmanifest";
-pub const WORKER_URL: &str = "/sw.js";
 /// La page qu'ouvre l'application installée.
 pub const START_URL: &str = "/app/";
 pub const THEME_COLOR: &str = "#16131f";
@@ -102,37 +141,14 @@ pub fn manifest(site: &Site) -> Manifest {
         )
 }
 
-/// La version de l'application : change dès qu'un fichier change, pour que
-/// le service worker remplace l'ancien cache.
-pub fn build_version(site: &Site) -> String {
-    let mut parts: Vec<&[u8]> = FILES.iter().map(|(_, _, bytes)| *bytes).collect();
-    parts.push(env!("CARGO_PKG_VERSION").as_bytes());
-    parts.push(site.base.as_bytes());
-    parts.push(site.api.as_bytes());
-    version(parts)
-}
-
-/// Le script du service worker : l'app s'ouvre hors ligne, l'API passe
-/// toujours par le réseau.
-pub fn worker(site: &Site) -> String {
-    let precache = FILES
-        .iter()
-        .map(|(path, _, _)| site.url(path))
-        .chain([site.url("/")]);
-    ServiceWorker::new("alley", build_version(site))
-        .precache(precache)
-        .offline_page(site.url(START_URL))
-        .network_only(site.url("/api/"))
-        .to_js()
-}
-
 pub fn routes(app: &mut App, site: &Site) {
-    for (path, kind, bytes) in FILES {
+    for (path, kind, bytes) in files() {
+        let bytes: &'static [u8] = bytes;
         app.get(path, move |_| async move {
             Response::new()
                 .header(header::CONTENT_TYPE, *kind)
                 .header(header::CACHE_CONTROL, "no-cache")
-                .send(*bytes)
+                .send(bytes)
         });
     }
     let manifest = manifest(site).to_json();
@@ -143,16 +159,6 @@ pub fn routes(app: &mut App, site: &Site) {
                 .header(header::CONTENT_TYPE, "application/manifest+json")
                 .header(header::CACHE_CONTROL, "no-cache")
                 .send(manifest)
-        }
-    });
-    let worker = worker(site);
-    app.get(WORKER_URL, move |_| {
-        let worker = worker.clone();
-        async move {
-            Response::new()
-                .header(header::CONTENT_TYPE, "text/javascript; charset=utf-8")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .send(worker)
         }
     });
     // L'icône que cherchent les navigateurs de bureau à la racine.

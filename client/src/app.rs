@@ -754,7 +754,7 @@ pub async fn start() {
         return ui::insecure();
     }
     let base = meta("alley-base");
-    register_worker(&base);
+    retire_worker();
     app(|a| a.base = base.clone());
     // Un lien de salon : `#salon=<id>`, effacé aussitôt de la barre d'adresse.
     let hash = window().location().hash().unwrap_or_default();
@@ -823,15 +823,40 @@ async fn ticker() {
     }
 }
 
-/// Le service worker de l'app (généré par Active) : ouverture hors ligne.
-pub fn register_worker(base: &str) {
-    let nav = window().navigator();
-    if !has(&nav, "serviceWorker") {
-        return;
+/// Alley n'a plus de service worker (rien à ouvrir hors ligne) : retire
+/// celui qu'une ancienne version aurait installé, et son cache.
+pub fn retire_worker() {
+    let window = window();
+    let nav = window.navigator();
+    if has(&nav, "serviceWorker") {
+        let container = nav.service_worker();
+        spawn(async move {
+            let Ok(list) =
+                wasm_bindgen_futures::JsFuture::from(container.get_registrations()).await
+            else {
+                return;
+            };
+            for registration in js_sys::Array::from(&list).iter() {
+                let registration: web_sys::ServiceWorkerRegistration =
+                    registration.unchecked_into();
+                if let Ok(done) = registration.unregister() {
+                    let _ = wasm_bindgen_futures::JsFuture::from(done).await;
+                }
+            }
+        });
     }
-    let options = web_sys::RegistrationOptions::new();
-    options.set_scope(&format!("{base}/"));
-    let _ = nav
-        .service_worker()
-        .register_with_options(&format!("{base}/sw.js"), &options);
+    if let Ok(caches) = window.caches() {
+        spawn(async move {
+            let Ok(keys) = wasm_bindgen_futures::JsFuture::from(caches.keys()).await else {
+                return;
+            };
+            for key in js_sys::Array::from(&keys).iter() {
+                if let Some(name) = key.as_string()
+                    && name.starts_with("alley")
+                {
+                    let _ = wasm_bindgen_futures::JsFuture::from(caches.delete(&name)).await;
+                }
+            }
+        });
+    }
 }

@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Les tâches de compilation d'Alley, en Rust : `cargo xtask web` compile le navigateur en WebAssembly"
+publish = false
+
+[dependencies]
+# Le générateur de wasm-bindgen, en bibliothèque : pas d'outil à installer.
+# Même version que la crate wasm-bindgen de client/.
+wasm-bindgen-cli-support = "=0.2.129"

@@ -74,14 +74,13 @@ pub async fn run(dir: &Path, site: &Site) -> std::io::Result<()> {
         );
         write(to, html.as_bytes())?;
     }
-    for (path, _, bytes) in assets::FILES {
+    for (path, _, bytes) in assets::files() {
         write(path, bytes)?;
     }
     write(
         assets::MANIFEST_URL,
         assets::manifest(site).to_json().as_bytes(),
     )?;
-    write(assets::WORKER_URL, assets::worker(site).as_bytes())?;
     // Les fichiers commençant par « _ » ou « . » passent tels quels.
     write(".nojekyll", b"")?;
     println!(

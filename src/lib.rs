@@ -22,6 +22,7 @@ pub mod export;
 pub mod pages;
 pub mod protocol;
 pub mod rooms;
+pub mod style;
 
 use paquets::App;
 use paquets::securite::prelude::*;
