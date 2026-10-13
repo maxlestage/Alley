@@ -1,9 +1,10 @@
-//! Les pages, rendues avec Active (SEO complet) :
+//! Les pages, rendues avec Active (SEO complet), en trois langues
+//! ([`crate::i18n`]) :
 //!
-//! - `/` : la vitrine qui présente Alley ;
-//! - `/app/` : l'application elle-même (construite par le navigateur, en Rust
-//!   compilé en WebAssembly) ;
-//! - toute autre adresse : une page 404.
+//! - `/`, `/en/`, `/es/` : la vitrine qui présente Alley ;
+//! - `/app/`, `/en/app/`, `/es/app/` : l'application elle-même (construite par
+//!   le navigateur, en Rust compilé en WebAssembly) ;
+//! - toute autre adresse : une page 404, dans les trois langues.
 //!
 //! Les mêmes pages sont servies par le serveur et exportées pour GitHub Pages
 //! ([`crate::export`]) : seules changent les adresses ([`Site`]).
@@ -12,24 +13,35 @@ use paquets::prelude::*;
 use paquets::vitesse::Response;
 
 use crate::Site;
-use crate::assets::{MANIFEST_URL, THEME_COLOR, WASM, WASM_JS, versioned};
+use crate::assets::{THEME_COLOR, WASM, WASM_JS, manifest_url, versioned};
+use crate::i18n::{LANGS, Lang};
 
-const DESCRIPTION: &str = "Alley : des salons de discussion éphémères, chiffrés de bout en bout. \
-Un pseudonyme, et c'est tout ; rien n'est enregistré, et tout disparaît à minuit. Messages, photos, \
-vocaux et appels vidéo, sur iPhone, Android, Windows, macOS et Linux.";
+fn attr(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+}
 
 /// Les balises qui rendent la page installable et belle en plein écran,
-/// notamment sur iPhone et iPad (barre d'état, encoche, icône d'accueil), et
-/// qui disent au module WebAssembly où sont le site et l'API.
-fn head_tags(site: &Site) -> String {
-    let attr = |s: &str| {
-        s.replace('&', "&amp;")
-            .replace('"', "&quot;")
-            .replace('<', "&lt;")
-    };
+/// notamment sur iPhone et iPad (barre d'état, encoche, icône d'accueil), qui
+/// relient les trois langues, et qui disent au module WebAssembly où sont le
+/// site et l'API.
+fn head_tags(site: &Site, lang: Lang, path: &str) -> String {
+    let mut alternates = String::new();
+    for other in LANGS {
+        alternates.push_str(&format!(
+            r#"<link rel="alternate" hreflang="{}" href="{}"/>"#,
+            other.code(),
+            attr(&site.url(&other.path(path)))
+        ));
+    }
+    alternates.push_str(&format!(
+        r#"<link rel="alternate" hreflang="x-default" href="{}"/>"#,
+        attr(&site.url(path))
+    ));
     format!(
-        r#"<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/><link rel="manifest" href="{manifest}"/><meta name="theme-color" content="{THEME_COLOR}"/><meta name="color-scheme" content="dark light"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Alley"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><meta name="format-detection" content="telephone=no"/><link rel="icon" href="{favicon}" type="image/svg+xml"/><link rel="apple-touch-icon" href="{touch}"/><meta name="alley-base" content="{base}"/><meta name="alley-api" content="{api}"/>"#,
-        manifest = attr(&site.url(MANIFEST_URL)),
+        r#"<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/><link rel="manifest" href="{manifest}"/><meta name="theme-color" content="{THEME_COLOR}"/><meta name="color-scheme" content="dark light"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Alley"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><meta name="format-detection" content="telephone=no"/><link rel="icon" href="{favicon}" type="image/svg+xml"/><link rel="apple-touch-icon" href="{touch}"/>{alternates}<meta name="alley-base" content="{base}"/><meta name="alley-api" content="{api}"/>"#,
+        manifest = attr(&site.url(&manifest_url(lang))),
         favicon = attr(&site.url("/assets/favicon.svg")),
         touch = attr(&site.url("/assets/apple-touch-icon.png")),
         base = attr(&site.base),
@@ -37,12 +49,12 @@ fn head_tags(site: &Site) -> String {
     )
 }
 
-fn seo(site: &Site, path: &str) -> Seo {
+fn seo(site: &Site, lang: Lang, path: &str) -> Seo {
     Seo::new()
-        .canonical(site.url(path))
+        .canonical(site.url(&lang.path(path)))
         .image(site.url("/assets/icon-512.png"))
         .site_name("Alley")
-        .locale("fr_FR")
+        .locale(lang.texts().locale)
 }
 
 /// Charge le navigateur, écrit en Rust et compilé en WebAssembly : la colle
@@ -56,31 +68,32 @@ fn boot(site: &Site, page: &str) -> String {
     )
 }
 
-/// La vitrine.
-pub fn home(site: &Site) -> Page {
-    Page::new("Alley — salons éphémères, chiffrés de bout en bout")
-        .lang("fr")
-        .description(DESCRIPTION)
-        .seo(seo(site, "/").json_ld(
+/// La vitrine, dans une langue.
+pub fn home(site: &Site, lang: Lang) -> Page {
+    let t = lang.texts();
+    Page::new(t.title)
+        .lang(lang.code())
+        .description(t.description)
+        .seo(seo(site, lang, "/").json_ld(
             r#"{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Alley","applicationCategory":"CommunicationApplication","operatingSystem":"iOS, iPadOS, Android, Windows, macOS, Linux, ChromeOS","offers":{"@type":"Offer","price":"0","priceCurrency":"EUR"}}"#,
         ))
         .plain()
-        .head(head_tags(site))
+        .head(head_tags(site, lang, "/"))
         .stylesheet(versioned(site, "/assets/site.css"))
         .head(boot(site, "site"))
-        .body(site_header(site))
-        .body(hero(site))
-        .body(features())
-        .body(security())
-        .body(platforms())
-        .body(faq())
-        .body(site_footer(site))
+        .body(site_header(site, lang))
+        .body(hero(site, lang))
+        .body(features(lang))
+        .body(security(lang))
+        .body(platforms(lang))
+        .body(faq(lang))
+        .body(site_footer(site, lang))
 }
 
-fn logo(site: &Site) -> Element {
+fn logo(site: &Site, lang: Lang) -> Element {
     a().class("logo")
-        .href(site.url("/"))
-        .attr("aria-label", "Alley, accueil")
+        .href(site.url(&lang.path("/")))
+        .attr("aria-label", lang.texts().home_label)
         .child(
             img()
                 .attr("src", site.url("/assets/favicon.svg"))
@@ -91,57 +104,73 @@ fn logo(site: &Site) -> Element {
         .child(span().text("Alley"))
 }
 
-fn site_header(site: &Site) -> Element {
-    header().class("top").child(logo(site)).child(
-        nav()
-            .child(a().href("#fonctionnalites").text("Fonctionnalités"))
-            .child(a().href("#securite").text("Sécurité"))
-            .child(a().href("#installer").text("Installer"))
-            .child(
-                a().class("button small")
-                    .href(site.url("/app/"))
-                    .text("Ouvrir Alley"),
-            ),
-    )
+/// Les trois langues, chacune vers la même page.
+fn languages(site: &Site, lang: Lang, path: &str) -> Element {
+    let mut list = nav()
+        .class("langs")
+        .attr("aria-label", lang.texts().language);
+    for other in LANGS {
+        let mut link = a()
+            .href(site.url(&other.path(path)))
+            .attr("hreflang", other.code())
+            .attr("lang", other.code())
+            .attr("data-lang", other.code())
+            .text(other.code().to_uppercase());
+        if other == lang {
+            link = link.attr("aria-current", "true");
+        }
+        list = list.child(link);
+    }
+    list
 }
 
-fn hero(site: &Site) -> Element {
+fn site_header(site: &Site, lang: Lang) -> Element {
+    let t = lang.texts();
+    header()
+        .class("top")
+        .child(logo(site, lang))
+        .child(
+            nav()
+                .child(a().href("#features").text(t.nav_features))
+                .child(a().href("#security").text(t.nav_security))
+                .child(a().href("#install").text(t.nav_install))
+                .child(
+                    a().class("button small")
+                        .href(site.url(&lang.path("/app/")))
+                        .text(t.open_app),
+                ),
+        )
+        .child(languages(site, lang, "/"))
+}
+
+fn hero(site: &Site, lang: Lang) -> Element {
+    let t = lang.texts();
     section()
         .class("hero")
         .child(
             div()
                 .class("hero-text")
-                .child(
-                    p().class("eyebrow")
-                        .text("🔒 Chiffré de bout en bout · Rien n'est enregistré · Gratuit"),
-                )
-                .child(h1().text("On parle. À minuit, tout s'efface."))
-                .child(p().class("lead").text(
-                    "Alley, ce sont des salons de discussion comme sur Discord, en plus léger : un \
-                     pseudonyme et c'est parti. Un salon ne vit que tant que quelqu'un y est, personne \
-                     ne voit ce qui s'est dit avant son arrivée, et à minuit il ne reste rien — ni sur \
-                     le serveur, ni sur votre téléphone.",
-                ))
+                .child(p().class("eyebrow").text(t.eyebrow))
+                .child(h1().text(t.headline))
+                .child(p().class("lead").text(t.lead))
                 .child(
                     div()
                         .class("cta")
-                        .child(a().class("button").href(site.url("/app/")).text("Entrer dans Alley"))
                         .child(
-                            a().class("button ghost")
-                                .href("#securite")
-                                .text("Comment ça marche"),
-                        ),
+                            a().class("button")
+                                .href(site.url(&lang.path("/app/")))
+                                .text(t.cta_enter),
+                        )
+                        .child(a().class("button ghost").href("#security").text(t.cta_how)),
                 )
-                .child(p().class("hint").text(
-                    "Dans le navigateur, et installable comme une app sur iPhone, iPad, Android, \
-                     Windows, macOS, Linux et ChromeOS.",
-                )),
+                .child(p().class("hint").text(t.hero_hint)),
         )
-        .child(hero_demo())
+        .child(hero_demo(lang))
 }
 
 /// La même conversation, vue par vous et vue par le serveur.
-fn hero_demo() -> Element {
+fn hero_demo(lang: Lang) -> Element {
+    let t = lang.texts();
     let bubble = |who: &'static str, color: &'static str, text: &'static str| {
         div()
             .class("msg")
@@ -160,38 +189,22 @@ fn hero_demo() -> Element {
         .child(
             div()
                 .class("pane")
-                .child(
-                    div()
-                        .class("pane-title")
-                        .text("# soirée-jeux — ce que vous voyez"),
-                )
-                .child(bubble(
-                    "Inès",
-                    "#7c5cff",
-                    "On se retrouve à 20 h pour la session ?",
-                ))
-                .child(bubble("Malo", "#22d3a6", "Ok ! Et à minuit, plus rien 🌙"))
-                .child(bubble(
-                    "Inès",
-                    "#7c5cff",
-                    "Parfait, personne d'autre ne lira ça 😌",
-                )),
+                .child(div().class("pane-title").text(t.demo_you))
+                .child(bubble("Inès", "#7c5cff", t.demo_messages[0]))
+                .child(bubble("Malo", "#22d3a6", t.demo_messages[1]))
+                .child(bubble("Inès", "#7c5cff", t.demo_messages[2])),
         )
         .child(
             div()
                 .class("pane server")
-                .child(
-                    div()
-                        .class("pane-title")
-                        .text("ce que voit le serveur (et oublie aussitôt)"),
-                )
+                .child(div().class("pane-title").text(t.demo_server))
                 .child(cipher("[[BROCOLIS:v1:q9Xw3J0+Lr2c…Pz8=]]"))
                 .child(cipher("[[BROCOLIS:v1:7HfK1aQe9mZ0…tY4=]]"))
                 .child(cipher("[[BROCOLIS:v1:Wm2Lr8sB1cXn…Qa0=]]")),
         )
 }
 
-fn card(icon: &'static str, title: &'static str, text: &'static str) -> Element {
+fn card((icon, title, text): (&'static str, &'static str, &'static str)) -> Element {
     article()
         .class("card")
         .child(span().class("icon").text(icon))
@@ -199,137 +212,122 @@ fn card(icon: &'static str, title: &'static str, text: &'static str) -> Element 
         .child(p().text(text))
 }
 
-fn features() -> Element {
+fn features(lang: Lang) -> Element {
+    let t = lang.texts();
+    let mut grid = div().class("grid");
+    for c in t.features {
+        grid = grid.child(card(c));
+    }
     section()
-        .id("fonctionnalites")
+        .id("features")
         .class("section")
-        .child(h2().text("Simple, vivant, sans traces"))
-        .child(p().class("section-lead").text(
-            "Les gestes d'un Discord, sans compte, sans historique, sans rien qui traîne.",
-        ))
-        .child(
-            div()
-                .class("grid")
-                .child(card("🎭", "Un pseudonyme, c'est tout", "Pas de compte, pas d'e-mail, pas de numéro. Choisissez un nom, entrez. Il est oublié dès que vous partez."))
-                .child(card("🔎", "Cherchez ou créez", "La liste des salons ouverts, une barre de recherche, et si votre salon n'existe pas encore, il est créé d'un geste. Ou privé, seulement par lien."))
-                .child(card("🌱", "Des salons vivants", "Un salon existe tant que quelqu'un y est. Le dernier qui part l'emporte avec lui."))
-                .child(card("🙈", "Pas d'historique", "En arrivant, vous ne voyez rien de ce qui s'est dit avant vous : le serveur ne garde aucun message, il les relaie et les oublie."))
-                .child(card("🌙", "Tout s'efface à minuit", "À minuit dans votre pays, l'écran se vide ; à minuit dans le pays de son créateur, le salon disparaît."))
-                .child(card("🎙️", "Photos, vocaux, appels", "Envoyez des photos et des messages vocaux, appelez en audio ou en vidéo, partagez votre écran — chiffré, de pair à pair.")),
-        )
+        .child(h2().text(t.features_title))
+        .child(p().class("section-lead").text(t.features_lead))
+        .child(grid)
 }
 
-fn step(n: &'static str, title: &'static str, text: &'static str) -> Element {
-    li().class("step")
-        .child(span().class("num").text(n))
-        .child(div().child(h3().text(title)).child(p().text(text)))
-}
-
-fn security() -> Element {
+fn security(lang: Lang) -> Element {
+    let t = lang.texts();
+    let mut steps = ol().class("steps");
+    for (i, (title, text)) in t.steps.iter().enumerate() {
+        steps = steps.child(
+            li().class("step")
+                .child(span().class("num").text((i + 1).to_string()))
+                .child(div().child(h3().text(*title)).child(p().text(*text))),
+        );
+    }
+    let mut tech = div().class("grid tech");
+    for c in t.tech {
+        tech = tech.child(card(c));
+    }
     section()
-        .id("securite")
+        .id("security")
         .class("section")
-        .child(h2().text("Chiffré sur votre appareil, oublié partout"))
-        .child(
-            ol()
-                .class("steps")
-                .child(step("1", "Une clé par salon", "Le premier arrivant tire une clé AES-256 au hasard, sur son appareil. Elle n'en sort jamais en clair."))
-                .child(step("2", "Remise de la main à la main", "Chaque nouvel arrivant présente une clé X25519 jetable ; les présents lui remettent la clé du salon, chiffrée pour lui seul (l'appairage de la messagerie Brocolis)."))
-                .child(step("3", "Tout est chiffré avant de partir", "Messages, pseudonymes, photos, vocaux et mise en relation des appels deviennent des jetons [[BROCOLIS:v1:…]] que le serveur relaie sans pouvoir les lire."))
-                .child(step("4", "Rien n'est gardé", "Le serveur ne stocke aucun message : les absents ne reçoivent rien, les retardataires ne voient rien d'avant. Rien n'est écrit sur votre appareil non plus."))
-                .child(step("5", "Vérifiez l'empreinte", "Chaque salon affiche l'empreinte de sa clé (ex. 4BB0-6F8E-4E3A-7715) : identique chez tous les présents, personne ne s'est intercalé.")),
-        )
-        .child(
-            div()
-                .class("grid tech")
-                .child(card("🥦", "Le protocole Brocolis", "AES-256-GCM et jetons de la messagerie Brocolis, clés remises par X25519 + HKDF-SHA256, empreintes identiques à l'app Brocolis."))
-                .child(card("📦", "Un serveur Paquets", "Écrit en Rust avec Paquets : WAF, limites de débit, CSP stricte, HTTPS imposé, HSTS. Et aucune base de données : tout vit en mémoire, le temps d'un salon."))
-                .child(card("🦀", "100 % Rust", "Le navigateur aussi est écrit en Rust, compilé en WebAssembly : chiffrement, salons, appels.")),
-        )
+        .child(h2().text(t.security_title))
+        .child(steps)
+        .child(tech)
 }
 
-fn platform(
-    id: &'static str,
-    icon: &'static str,
-    name: &'static str,
-    how: &'static str,
-) -> Element {
-    article()
-        .class("platform")
-        .attr("data-os", id)
-        .child(span().class("icon").text(icon))
-        .child(h3().text(name))
-        .child(p().text(how))
-}
-
-fn platforms() -> Element {
+fn platforms(lang: Lang) -> Element {
+    let t = lang.texts();
+    const OS: [(&str, &str); 6] = [
+        ("ios", "📱"),
+        ("android", "🤖"),
+        ("windows", "🪟"),
+        ("macos", "🍎"),
+        ("linux", "🐧"),
+        ("chromeos", "💻"),
+    ];
+    let mut grid = div().class("grid platforms");
+    for ((id, icon), (name, how)) in OS.iter().zip(t.platforms) {
+        grid = grid.child(
+            article()
+                .class("platform")
+                .attr("data-os", *id)
+                .child(span().class("icon").text(*icon))
+                .child(h3().text(name))
+                .child(p().text(how)),
+        );
+    }
     section()
-        .id("installer")
+        .id("install")
         .class("section")
-        .child(h2().text("Sur tous vos appareils"))
-        .child(p().class("section-lead").text(
-            "Alley est une application web installable : la même app, à jour partout, sans \
-             passer par un magasin d'applications.",
-        ))
+        .child(h2().text(t.platforms_title))
+        .child(p().class("section-lead").text(t.platforms_lead))
         .child(
             div()
                 .class("install-now")
-                .child(button().id("install").class("button").attr("hidden", "").text("Installer Alley"))
+                .child(
+                    button()
+                        .id("install")
+                        .class("button")
+                        .attr("hidden", "")
+                        .text(t.install),
+                )
                 .child(p().id("install-hint").class("hint").text("")),
         )
-        .child(
-            div()
-                .class("grid platforms")
-                .child(platform("ios", "📱", "iPhone et iPad", "Dans Safari, touchez Partager puis « Sur l'écran d'accueil ». Alley s'ouvre en plein écran, comme une app, avec ses notifications."))
-                .child(platform("android", "🤖", "Android", "Dans Chrome, touchez « Installer l'application » (ou ⋮ → Ajouter à l'écran d'accueil)."))
-                .child(platform("windows", "🪟", "Windows", "Dans Edge ou Chrome, cliquez sur l'icône d'installation dans la barre d'adresse. Alley rejoint le menu Démarrer."))
-                .child(platform("macos", "🍎", "macOS", "Dans Safari : Fichier → Ajouter au Dock. Dans Chrome ou Edge : l'icône d'installation de la barre d'adresse."))
-                .child(platform("linux", "🐧", "Linux", "Dans Chrome, Chromium ou Edge : l'icône d'installation. Dans Firefox, Alley marche directement dans un onglet."))
-                .child(platform("chromeos", "💻", "ChromeOS", "Cliquez sur l'icône d'installation dans la barre d'adresse : Alley rejoint le lanceur d'applications.")),
-        )
+        .child(grid)
 }
 
-fn qa(q: &'static str, a_: &'static str) -> Element {
-    details().child(summary().text(q)).child(p().text(a_))
-}
-
-fn faq() -> Element {
-    section()
+fn faq(lang: Lang) -> Element {
+    let t = lang.texts();
+    let mut section_ = section()
         .id("faq")
         .class("section narrow")
-        .child(h2().text("Questions fréquentes"))
-        .child(qa("Faut-il créer un compte ?", "Non. Un pseudonyme, le temps de la visite. Il n'est enregistré nulle part : fermez la page et il est oublié."))
-        .child(qa("Pourquoi je ne vois pas les anciens messages ?", "Parce qu'ils n'existent plus nulle part. Le serveur relaie chaque message aux personnes présentes, puis l'oublie. C'est voulu : ce qui se dit dans Alley reste entre ceux qui étaient là."))
-        .child(qa("Quand un salon disparaît-il ?", "Dès que la dernière personne en sort, et au plus tard à minuit dans le pays de celui qui l'a créé. De votre côté, l'écran se vide aussi à minuit chez vous."))
-        .child(qa("Que voit le serveur ?", "Le nom des salons publics (pour qu'on puisse les chercher) et combien de personnes y sont. Ni les pseudonymes, ni les messages, ni la clé. Comme tout serveur web, il voit les adresses IP qui se connectent."))
-        .child(qa("Les appels sont-ils chiffrés ?", "Oui : ils passent de pair à pair en WebRTC (DTLS-SRTP), et leur mise en relation est chiffrée avec la clé du salon."))
-        .child(qa("Comment inviter quelqu'un dans un salon privé ?", "Touchez 🔗 dans le salon : le lien marche tant que le salon existe, c'est-à-dire tant que quelqu'un y est, et jusqu'à minuit."))
+        .child(h2().text(t.faq_title));
+    for (q, a_) in t.faq {
+        section_ = section_.child(details().child(summary().text(q)).child(p().text(a_)));
+    }
+    section_
 }
 
-fn site_footer(site: &Site) -> Element {
+fn site_footer(site: &Site, lang: Lang) -> Element {
+    let t = lang.texts();
     footer()
         .class("bottom")
-        .child(logo(site))
-        .child(p().text("Écrit avec Paquets 📦 · chiffré avec Brocolis 🥦"))
+        .child(logo(site, lang))
+        .child(p().text(t.footer_made))
         .child(
             nav()
-                .child(a().href(site.url("/app/")).text("Entrer dans Alley"))
+                .child(a().href(site.url(&lang.path("/app/"))).text(t.cta_enter))
                 .child(
                     a().href(format!("{}/api/v1/stats", site.api))
-                        .text("Ce que voit le serveur"),
+                        .text(t.footer_server),
                 ),
         )
+        .child(languages(site, lang, "/"))
 }
 
 /// L'application : seulement la coquille ; le WebAssembly déchiffre et affiche tout
 /// dans le navigateur.
-pub fn app_shell(site: &Site) -> Page {
+pub fn app_shell(site: &Site, lang: Lang) -> Page {
+    let t = lang.texts();
     Page::new("Alley")
-        .lang("fr")
-        .description(DESCRIPTION)
-        .seo(seo(site, "/app/"))
+        .lang(lang.code())
+        .description(t.description)
+        .seo(seo(site, lang, "/app/"))
         .plain()
-        .head(head_tags(site))
+        .head(head_tags(site, lang, "/app/"))
         .stylesheet(versioned(site, "/assets/app.css"))
         .head(boot(site, "app"))
         .body(
@@ -343,33 +341,38 @@ pub fn app_shell(site: &Site) -> Page {
                         .attr("width", "72")
                         .attr("height", "72"),
                 )
-                .child(p().text("Ouverture d'Alley…")),
+                .child(p().text(t.app_loading)),
         )
-        .body(
-            noscript().text("Alley chiffre vos messages dans le navigateur : activez JavaScript."),
-        )
+        .body(noscript().text(t.noscript))
 }
 
+/// La page 404, dans les trois langues à la fois (GitHub Pages n'en sert
+/// qu'une).
 pub fn not_found(site: &Site) -> Page {
-    Page::new("Introuvable — Alley")
+    let mut hero_ = section().class("hero notfound");
+    for lang in LANGS {
+        let t = lang.texts();
+        hero_ = hero_.child(
+            div()
+                .attr("lang", lang.code())
+                .child(h2().text(t.notfound_title))
+                .child(p().class("lead").text(t.notfound_lead))
+                .child(
+                    a().class("button")
+                        .href(site.url(&lang.path("/")))
+                        .text(t.notfound_back),
+                ),
+        );
+    }
+    Page::new("404 — Alley")
         .lang("fr")
         .plain()
-        .head(head_tags(site))
+        .head(head_tags(site, Lang::Fr, "/"))
         .stylesheet(versioned(site, "/assets/site.css"))
         .seo(Seo::new().noindex(true))
         .status(404)
-        .body(site_header(site))
-        .body(
-            section()
-                .class("hero notfound")
-                .child(h1().text("Cette ruelle ne mène nulle part."))
-                .child(p().class("lead").text("La page demandée n'existe pas."))
-                .child(
-                    a().class("button")
-                        .href(site.url("/"))
-                        .text("Retour à l'accueil"),
-                ),
-        )
+        .body(site_header(site, Lang::Fr))
+        .body(hero_)
 }
 
 /// La politique de sécurité d'une page, élargie à ce dont l'app a besoin :
@@ -419,19 +422,25 @@ fn respond(page: Page, site: &Site, req: &Request) -> Response {
     res.header("content-security-policy", csp)
 }
 
-/// Les pages, servies pour `site`.
+/// Les pages, servies pour `site`, dans chaque langue.
 pub fn routes(app: &mut App, site: &Site) {
-    let s = site.clone();
-    app.get("/", move |req: Request| {
-        let s = s.clone();
-        async move { respond(home(&s), &s, &req) }
-    });
-    // `/app` y mène aussi (Vitesse ignore la barre finale).
-    let s = site.clone();
-    app.get("/app/", move |req: Request| {
-        let s = s.clone();
-        async move { respond(app_shell(&s), &s, &req) }
-    });
+    for lang in LANGS {
+        let s = site.clone();
+        let home_path = match lang {
+            Lang::Fr => "/".to_owned(),
+            other => format!("{}/", other.prefix()),
+        };
+        app.get(&home_path, move |req: Request| {
+            let s = s.clone();
+            async move { respond(home(&s, lang), &s, &req) }
+        });
+        // `/app` y mène aussi (Vitesse ignore la barre finale).
+        let s = site.clone();
+        app.get(&lang.path("/app/"), move |req: Request| {
+            let s = s.clone();
+            async move { respond(app_shell(&s, lang), &s, &req) }
+        });
+    }
     let s = site.clone();
     app.fallback(move |req: Request| {
         let s = s.clone();
@@ -439,7 +448,7 @@ pub fn routes(app: &mut App, site: &Site) {
             if req.path().starts_with("/api/") {
                 return Response::new()
                     .status(404)
-                    .json(json!({ "message": "adresse inconnue" }));
+                    .json(json!({ "error": "not_found" }));
             }
             respond(not_found(&s), &s, &req)
         }
