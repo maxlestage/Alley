@@ -5,6 +5,12 @@ edition = "2024"
 rust-version = "1.88"
 description = "Alley : l'équivalent de Discord où tout est chiffré de bout en bout (protocole Brocolis), servi par une App Paquets"
 publish = false
+build = "build.rs"
+
+# Le navigateur (`client/`, Rust compilé en WebAssembly) vit dans le même
+# espace de travail.
+[workspace]
+members = ["client"]
 
 [[bin]]
 name = "alley"
@@ -21,11 +27,21 @@ sha2 = "0.10"
 base64 = "0.22"
 
 [dev-dependencies]
-# Les tests chiffrent comme le navigateur (et l'app Brocolis) pour vérifier
-# que le serveur ne voit passer que des jetons.
-aes-gcm = "0.10"
+# Les tests chiffrent exactement comme le navigateur : avec le même code Rust.
+alley-web = { path = "client" }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
+strip = true
+
+# Le code du navigateur :
+# `cargo build -p alley-web --lib --target wasm32-unknown-unknown --profile wasm-release`
+# (voir scripts/web.sh).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
 strip = true

@@ -61,7 +61,11 @@ jobs:
         with:
           ref: master
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
+      - name: Le navigateur, en WebAssembly
+        run: scripts/wasm-bindgen.sh && scripts/web.sh
       - id: pages
         uses: actions/configure-pages@v5
       - name: Adresse de l'API

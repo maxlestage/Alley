@@ -1,9 +1,8 @@
 # Teste chaque push, puis fusionne automatiquement la branche dans master.
 #
-# - rust : formatage, clippy, tests (API, chiffrement imposé, rotation de clé,
-#   CORS, HTTPS, export GitHub Pages) ;
-# - web : syntaxe des scripts, chiffrement du navigateur recoupé avec les
-#   vecteurs de Brocolis ;
+# - rust : formatage, compilation du navigateur en WebAssembly, clippy (serveur
+#   et navigateur), tests (API, chiffrement imposé et recoupé avec les vecteurs
+#   de Brocolis, rotation de clé, CORS, HTTPS, export GitHub Pages) ;
 # - merge : quand tout est vert, la branche est fusionnée dans master (sauf
 #   master elle-même et les branches wip/...), puis Heroku (l'API) et GitHub
 #   Pages (le site) sont déployés.
@@ -20,36 +19,26 @@ env:
 
 jobs:
   rust:
-    name: Rust
+    name: Rust (serveur et navigateur)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-
-  web:
-    name: Navigateur
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Syntaxe des scripts
-        run: for f in web/*.js; do node --check "$f"; done
-      - name: Formatage (Prettier)
-        run: npx --yes prettier@3.8.1 --check "web/*.js" "web/*.mjs" "web/*.css"
-      - name: Chiffrement, recoupé avec les vecteurs de Brocolis
-        run: node --test web/*.test.mjs
+      - run: cargo fmt --all --check
+      - name: Le navigateur, en WebAssembly
+        run: scripts/wasm-bindgen.sh && scripts/web.sh
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy -p alley-web --target wasm32-unknown-unknown -- -D warnings
+      - name: Tests (API, chiffrement Brocolis recoupé, rotation, CORS, HTTPS, export)
+        run: cargo test --workspace
 
   merge:
     name: Fusion dans master
-    needs: [rust, web]
+    needs: [rust]
     if: >-
       github.event_name == 'push' && github.ref_name != 'master' &&
       !startsWith(github.ref_name, 'wip/')
@@ -85,5 +74,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run heroku.yml --ref master --repo "$GITHUB_REPOSITORY"
-          gh workflow run pages.yml --ref master --repo "$GITHUB_REPOSITORY"
+          # Juste après la fusion, GitHub peut ne pas encore connaître un
+          # workflow ajouté par cette branche : on réessaie un peu.
+          for workflow in heroku.yml pages.yml; do
+            for attempt in 1 2 3 4 5 6; do
+              if gh workflow run "$workflow" --ref master --repo "$GITHUB_REPOSITORY"; then
+                break
+              fi
+              if [ "$attempt" = 6 ]; then
+                echo "::warning::Impossible de lancer $workflow : lancez-le depuis Actions → $workflow → Run workflow."
+              fi
+              sleep 10
+            done
+          done
