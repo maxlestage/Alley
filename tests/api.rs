@@ -334,8 +334,12 @@ async fn the_site_and_the_installable_app_are_served() {
     assert!(permissions.contains("microphone=(self)") && permissions.contains("camera=(self)"));
     let shell = app.text();
     assert!(
-        shell.contains(r#"import init from "/assets/alley_web.js""#),
+        shell.contains(r#"<script type="module" src="/assets/alley_web.js?v="#),
         "{shell}"
+    );
+    assert!(
+        !shell.contains("<script type=\"module\">"),
+        "aucun script en ligne"
     );
     assert!(shell.contains(r#"<meta name="alley-page" content="app"/>"#));
     assert!(
@@ -349,9 +353,16 @@ async fn the_site_and_the_installable_app_are_served() {
     assert_eq!(manifest["display"], "standalone");
     assert!(manifest["icons"].as_array().unwrap().len() >= 3);
 
-    let worker = client.get("/sw.js").await.text();
-    assert!(worker.contains(r#"const NETWORK_ONLY = ["/api/"];"#));
-    assert!(worker.contains("/assets/alley_web_bg.wasm"));
+    assert_eq!(
+        client.get("/sw.js").await.status(),
+        404,
+        "plus de service worker"
+    );
+    let css = client.get("/assets/app.css").await.text();
+    assert!(
+        css.starts_with(":root{--bg:"),
+        "les styles, rendus depuis Rust"
+    );
 
     for asset in [
         "/assets/alley_web.js",
@@ -381,13 +392,14 @@ async fn the_github_pages_export_is_complete() {
     let app = read("app/index.html");
     assert!(app.contains(r#"<meta http-equiv="Content-Security-Policy""#));
     assert!(app.contains("connect-src 'self' https://alley.example wss://alley.example"));
-    assert!(app.contains(r#"import init from "/Alley/assets/alley_web.js""#));
+    assert!(app.contains(r#"src="/Alley/assets/alley_web.js?v="#));
     assert!(app.contains(r#"<meta name="alley-api" content="https://alley.example"/>"#));
     assert!(read("index.html").contains(r#"href="/Alley/app/""#));
     assert!(read("404.html").contains("nulle part"));
     let manifest: Value = paquets::serde_json::from_str(&read("manifest.webmanifest")).unwrap();
     assert_eq!(manifest["start_url"], "/Alley/app/");
-    assert!(read("sw.js").contains("/Alley/assets/alley_web_bg.wasm"));
+    assert!(read("assets/site.css").starts_with(":root{"));
+    assert!(!dir.join("sw.js").exists());
     assert!(dir.join("assets/icon-512.png").exists());
     assert!(dir.join(".nojekyll").exists());
     std::fs::remove_dir_all(&dir).unwrap();
