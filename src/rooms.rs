@@ -61,6 +61,8 @@ pub fn is_tag(tag: &str) -> bool {
 }
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+/// La plus longue période qu'on puisse payer (7 jours), et sa marge de fuseau.
+const MAX_PERIOD: i64 = 8 * DAY_MS;
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -292,10 +294,16 @@ pub struct Kept {
 
 impl Rooms {
     /// Crée un salon — ou, pour un salon public, rejoint celui qui porte déjà
-    /// ce nom. `offset_min` : le décalage horaire du créateur ; `days` : 1
-    /// (jusqu'à minuit), ou 3 et 7 avec un abonnement (jusqu'au minuit qui
-    /// clôt le troisième ou le septième jour).
-    pub fn create(&self, name: &str, private: bool, offset_min: i64, days: u32) -> Option<Value> {
+    /// ce nom. `offset_min` : le décalage horaire du créateur. Le salon
+    /// ferme à minuit chez lui ; ou, s'il a payé une période, à la fin de
+    /// celle-ci (`until`, en millisecondes : 7 jours au plus).
+    pub fn create(
+        &self,
+        name: &str,
+        private: bool,
+        offset_min: i64,
+        until: Option<i64>,
+    ) -> Option<Value> {
         let name = clean_name(name)?;
         let key = normalize(&name);
         let mut rooms = self.rooms.lock().unwrap();
@@ -313,9 +321,13 @@ impl Rooms {
         }
         // Un salon privé n'est trouvable que par son lien : identifiant long.
         let id = random_id(if private { 16 } else { 6 });
-        let days = days.clamp(1, 7);
-        let expires_at = next_midnight(now_ms(), offset_min) + i64::from(days - 1) * DAY_MS;
-        let room = Room::new(id.clone(), name, private, expires_at, days > 1);
+        let now = now_ms();
+        let midnight = next_midnight(now, offset_min);
+        let expires_at = until
+            .map(|u| u.min(now + MAX_PERIOD))
+            .filter(|u| *u > midnight)
+            .unwrap_or(midnight);
+        let room = Room::new(id.clone(), name, private, expires_at, expires_at > midnight);
         let info = room.info(&self.signing_key());
         rooms.insert(id, room);
         Some(info)
@@ -721,10 +733,10 @@ mod tests {
     #[test]
     fn a_room_lives_until_midnight_even_empty() {
         let rooms = Rooms::default();
-        let room = rooms.create("Café", false, 120, 1).unwrap();
+        let room = rooms.create("Café", false, 120, None).unwrap();
         let id = room["id"].as_str().unwrap().to_owned();
         // Le même nom public mène au même salon.
-        assert_eq!(rooms.create("cafe", false, 0, 1).unwrap()["id"], id);
+        assert_eq!(rooms.create("cafe", false, 0, None).unwrap()["id"], id);
         assert_eq!(rooms.list("CAFÉ").len(), 1);
         assert!(rooms.list("thé").is_empty());
 
@@ -782,7 +794,9 @@ mod tests {
     #[test]
     fn a_forgotten_room_comes_back_from_its_signed_description() {
         let before = Rooms::default();
-        let info = before.create("Week-end", true, 0, 3).unwrap();
+        let info = before
+            .create("Week-end", true, 0, Some(now_ms() + 3 * DAY_MS))
+            .unwrap();
         let kept = Kept {
             id: info["id"].as_str().unwrap().to_owned(),
             name: "Week-end".into(),
@@ -835,7 +849,7 @@ mod tests {
         let a = rooms.join(&first, "x".into(), None, None, None).unwrap();
         rooms.leave(&first, &a.me);
         // Jamais rejoint : un salon ne dure qu'une minute.
-        let unjoined = rooms.create("Personne", true, 0, 1).unwrap()["id"]
+        let unjoined = rooms.create("Personne", true, 0, None).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -849,24 +863,24 @@ mod tests {
         rooms.sweep();
         assert!(rooms.info(&unjoined).is_none());
         for i in 1..MAX_ROOMS {
-            rooms.create(&format!("Salon {i}"), true, 0, 1).unwrap();
+            rooms.create(&format!("Salon {i}"), true, 0, None).unwrap();
         }
         assert_eq!(rooms.count().0, MAX_ROOMS);
         // Plein : le salon vide cède sa place ; ensuite, plus rien.
-        assert!(rooms.create("Encore un", true, 0, 1).is_some());
+        assert!(rooms.create("Encore un", true, 0, None).is_some());
         assert!(rooms.info(&first).is_none());
-        assert!(rooms.create("De trop", true, 0, 1).is_none());
+        assert!(rooms.create("De trop", true, 0, None).is_none());
     }
 
     #[test]
     fn a_tag_finds_its_rooms_again() {
         let rooms = Rooms::default();
         let tag = "ab".repeat(32);
-        let secret = rooms.create("Secret", true, 0, 1).unwrap()["id"]
+        let secret = rooms.create("Secret", true, 0, None).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
-        let public = rooms.create("Place", false, 0, 1).unwrap()["id"]
+        let public = rooms.create("Place", false, 0, None).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -901,7 +915,7 @@ mod tests {
     }
 
     fn room_id(rooms: &Rooms) -> String {
-        rooms.create("Club", false, 0, 1).unwrap()["id"]
+        rooms.create("Club", false, 0, None).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned()
@@ -984,7 +998,7 @@ mod tests {
     #[test]
     fn a_banned_address_is_disconnected() {
         let rooms = Rooms::default();
-        let id = rooms.create("Place", false, 0, 1).unwrap()["id"]
+        let id = rooms.create("Place", false, 0, None).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -1016,7 +1030,7 @@ mod tests {
     #[test]
     fn midnight_closes_the_room_for_everyone() {
         let rooms = Rooms::default();
-        let id = rooms.create("Nuit", true, 0, 1).unwrap()["id"]
+        let id = rooms.create("Nuit", true, 0, None).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();

@@ -240,14 +240,14 @@ fn welcome() -> El {
                             app(|a| {
                                 a.name = name;
                                 a.account = Some(account);
-                                a.subscription = None;
+                                a.pass = None;
                             });
                             // Ce que garde l'appareil est relu : la signature
                             // de ce compte est vérifiée aussi.
                             crate::vault::set_account(Some(signer));
                             recent::load().await;
                             if let Some(account) = app(|a| a.account.clone()) {
-                                app::load_subscription(&account).await;
+                                app::load_pass(&account).await;
                             }
                             app::warn_if_tampered();
                             app::enter().await;
@@ -357,8 +357,8 @@ fn lobby() -> El {
                             app(|a| {
                                 a.name.clear();
                                 a.account = None;
-                                a.subscription = None;
-                                a.sub_id = None;
+                                a.pass = None;
+                                a.pass_id = None;
                                 a.mine.clear();
                             });
                             crate::vault::set_account(None);
@@ -582,42 +582,34 @@ pub fn render_rooms() {
     });
 }
 
-/// Un prix mensuel (`4,99 € par mois`).
+/// Un prix payé une fois (`4,99 €`).
 fn price(cents: u64) -> String {
     let sep = if i18n::lang() == Lang::En { "." } else { "," };
     let amount = format!("{}{sep}{:02}", cents / 100, cents % 100);
-    fill(t().price_month, &[&amount])
+    fill(t().price_once, &[&amount])
 }
 
-/// Les abonnements : des salons de 3 ou 7 jours, payés chaque mois (aucune
-/// formule à l'année).
+/// Les périodes payantes : 3 ou 7 jours, payés une fois, pendant lesquels
+/// les salons restent ouverts jusqu'à la fin de la période.
 pub fn render_plans() {
     let Some(el) = by_id("plans") else { return };
-    let (plans, sub, signed_in) =
-        app(|a| (a.plans.clone(), a.subscription.clone(), a.account.is_some()));
+    let (plans, pass, signed_in) = app(|a| (a.plans.clone(), a.pass.clone(), a.account.is_some()));
     let Some(plans) = plans.filter(|p| p["enabled"] == true) else {
         let _ = el.set_attribute("hidden", "");
         return;
     };
     let _ = el.remove_attribute("hidden");
     let t = t();
-    let active = sub.as_ref().filter(|s| s["active"] == true);
+    let active = pass.as_ref().filter(|s| s["active"] == true);
     scope("plans", || {
         let mut items: Vec<Child> = vec![
             h("h2").text(t.plans_title).into(),
             h("p.muted").text(t.plans_intro).into(),
         ];
         match active {
-            Some(sub) => {
-                let days = sub["days"].as_u64().unwrap_or(1).to_string();
-                items.push(h("p.subscribed").text(fill(t.subscribed, &[&days])).into());
-                items.push(
-                    h("button.primary#manage")
-                        .attr("type", "button")
-                        .text(t.manage_subscription)
-                        .click(|| async { app::manage_subscription().await })
-                        .into(),
-                );
+            Some(pass) => {
+                let end = until(pass["until"].as_f64().unwrap_or_default());
+                items.push(h("p.subscribed").text(fill(t.pass_active, &[&end])).into());
             }
             None => {
                 let cards = plans["plans"].as_array().cloned().unwrap_or_default();
@@ -626,28 +618,39 @@ pub fn render_plans() {
                         .children(cards.iter().map(|p| {
                             let id = p["id"].as_str().unwrap_or_default().to_owned();
                             let days = p["days"].as_u64().unwrap_or_default().to_string();
+                            let button = h("button.primary").attr("type", "button");
+                            // Sans compte : de quoi se connecter, plutôt qu'un
+                            // bouton éteint.
+                            let button = if signed_in {
+                                button.text(t.pay).click(move || {
+                                    let id = id.clone();
+                                    async move { app::buy(&id).await }
+                                })
+                            } else {
+                                button.text(t.pay_sign_in).on("click", |_| {
+                                    app(|a| {
+                                        a.name.clear();
+                                        a.account = None;
+                                    });
+                                    render();
+                                    if let Some(el) = by_id("password") {
+                                        focus(&el);
+                                    }
+                                })
+                            };
                             h("div.plan-card")
-                                .data("plan", &id)
+                                .data("plan", p["id"].as_str().unwrap_or_default())
                                 .child(h("strong").text(fill(t.plan_name, &[&days])))
                                 .child(
                                     h("span.price")
                                         .text(price(p["amount"].as_u64().unwrap_or_default())),
                                 )
-                                .child(
-                                    h("button.primary")
-                                        .attr("type", "button")
-                                        .prop("disabled", !signed_in)
-                                        .text(t.subscribe)
-                                        .click(move || {
-                                            let id = id.clone();
-                                            async move { app::subscribe(&id).await }
-                                        }),
-                                )
+                                .child(button)
                         }))
                         .into(),
                 );
                 if !signed_in {
-                    items.push(h("p.small.muted").text(t.subscribe_login).into());
+                    items.push(h("p.small.muted").text(t.pay_login).into());
                 }
             }
         }

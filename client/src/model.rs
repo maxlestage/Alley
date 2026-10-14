@@ -215,15 +215,15 @@ pub struct App {
     pub known: Vec<Value>,
     /// Les formules d'abonnement du serveur (`GET /api/v1/plans`).
     pub plans: Option<Value>,
-    /// L'abonnement du compte connecté (`POST /api/v1/billing/status`).
-    pub subscription: Option<Value>,
-    /// De retour du paiement Stripe (`#abonnement=merci`), et l'attente de
+    /// La période payée du compte connecté (`POST /api/v1/billing/status`).
+    pub pass: Option<Value>,
+    /// De retour du paiement Stripe (`#periode=<session>`), et l'attente de
     /// sa confirmation déjà annoncée.
     pub paid: bool,
     pub paid_waiting: bool,
     pub paid_session: Option<String>,
-    /// L'abonnement Stripe du compte, gardé par l'appareil.
-    pub sub_id: Option<String>,
+    /// Le paiement Stripe de la période du compte, gardé par l'appareil.
+    pub pass_id: Option<String>,
     /// La clé publique de chaque serveur, qui vérifie ce qu'il dit des salons.
     pub server_keys: std::collections::HashMap<String, String>,
     /// Bloqué par la modération : plus rien n'est possible.

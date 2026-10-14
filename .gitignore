@@ -3,3 +3,5 @@ target/
 *.memoire
 /client/pkg
 /models/
+*.db-shm
+*.db-wal
