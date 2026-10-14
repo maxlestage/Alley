@@ -43,16 +43,10 @@
       "description": "Abonnements (facultatif) : la clé secrète Stripe (sk_live_… ou sk_test_…). Sans elle, l'offre n'est pas proposée.",
       "required": false
     },
-    "STRIPE_WEBHOOK_SECRET": {
-      "description": "Abonnements (facultatif) : le secret du webhook Stripe (whsec_…) pour https://<votre-app>.herokuapp.com/api/v1/billing/webhook.",
-      "required": false
+    "ALLEY_SIGNING_KEY": {
+      "description": "La clé qui signe ce que le serveur dit des salons (64 caractères hexadécimaux) : grâce à elle, les salons de plusieurs jours rouvrent après un redémarrage, sans base de données. Générée automatiquement ; ne la changez pas.",
+      "generator": "secret"
     }
   },
-  "success_url": "/",
-  "addons": [
-    {
-      "plan": "heroku-postgresql:essential-0",
-      "as": "DATABASE"
-    }
-  ]
+  "success_url": "/"
 }

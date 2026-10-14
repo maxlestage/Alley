@@ -246,6 +246,9 @@ fn welcome() -> El {
                             // de ce compte est vérifiée aussi.
                             crate::vault::set_account(Some(signer));
                             recent::load().await;
+                            if let Some(account) = app(|a| a.account.clone()) {
+                                app::load_subscription(&account).await;
+                            }
                             app::warn_if_tampered();
                             app::enter().await;
                         }
@@ -355,6 +358,7 @@ fn lobby() -> El {
                                 a.name.clear();
                                 a.account = None;
                                 a.subscription = None;
+                                a.sub_id = None;
                                 a.mine.clear();
                             });
                             crate::vault::set_account(None);

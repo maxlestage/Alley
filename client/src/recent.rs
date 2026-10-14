@@ -47,6 +47,18 @@ pub struct Recent {
 }
 
 impl Recent {
+    /// Ce que le serveur a dit du salon, avec sa signature : de quoi le
+    /// rouvrir s'il l'a oublié.
+    pub fn statement(&self) -> serde_json::Value {
+        serde_json::json!({
+            "id": self.id,
+            "name": self.name,
+            "private": self.private,
+            "expires_at": self.expires_at as i64,
+            "sig": self.sig,
+        })
+    }
+
     /// La signature du serveur (clé publique en base64) est-elle juste ?
     pub fn signed_by(&self, server_key: &str) -> bool {
         crate::crypto::room_signed_by(
