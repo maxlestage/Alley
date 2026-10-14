@@ -17,7 +17,8 @@ use crate::call::{self, Call};
 use crate::dom::*;
 use crate::i18n::{self, LANGS, Lang, fill, t};
 use crate::model::*;
-use crate::net::needs_server;
+use crate::net::{api_base, needs_server};
+use crate::recent;
 
 // ---------------------------------------------------------------------------
 // Les écrans
@@ -49,6 +50,9 @@ fn until(t: f64) -> String {
 
 fn people_label(n: u64) -> String {
     let t = t();
+    if n == 0 {
+        return t.room_empty.to_owned();
+    }
     fill(
         if n <= 1 {
             t.present_one
@@ -102,6 +106,7 @@ fn take_server(input: &Element) -> bool {
         toast(t().server_invalid, true);
         return false;
     }
+    recent::save_server(&s);
     app(|a| a.server = s);
     true
 }
@@ -340,11 +345,24 @@ fn lobby() -> El {
         )
         .child(
             h("main.lobby-main")
-                .child(signed_in.then(|| {
-                    h("section.mine")
-                        .child(h("h2").text(t.my_rooms))
-                        .child(h("div#mine.rooms").attr("aria-live", "polite"))
-                }))
+                .child(
+                    h("section.mine#mine-section")
+                        .attr("hidden", "")
+                        .child(
+                            h("div.section-head").child(h("h2").text(t.my_rooms)).child(
+                                h("button.link-button#forget-all")
+                                    .attr("type", "button")
+                                    .text(t.forget_all)
+                                    .on("click", |_| {
+                                        recent::forget_all();
+                                        app(|a| a.known.clear());
+                                        toast(i18n::t().forgotten_all, false);
+                                        render_mine();
+                                    }),
+                            ),
+                        )
+                        .child(h("div#mine.rooms").attr("aria-live", "polite")),
+                )
                 .child(h("h1").text(t.lobby_title))
                 .child(h("p.muted").text(t.lobby_intro))
                 .child(
@@ -376,6 +394,10 @@ fn simple(s: &str) -> String {
 
 /// Un salon de la liste.
 fn room_card(r: &serde_json::Value) -> Child {
+    room_button(r).into()
+}
+
+fn room_button(r: &serde_json::Value) -> El {
     let id = r["id"].as_str().unwrap_or_default().to_owned();
     let n = r["members"].as_u64().unwrap_or_default();
     let expires = r["expires_at"].as_f64().unwrap_or_default();
@@ -392,19 +414,107 @@ fn room_card(r: &serde_json::Value) -> Child {
             let id = id.clone();
             async move { join_room(&id).await }
         })
+}
+
+/// Un salon dont se souvient l'appareil : on y revient, ou on l'oublie.
+fn remembered(card: El, id: &str, server: &str, created: bool) -> Child {
+    let (id, server) = (id.to_owned(), server.to_owned());
+    let card = if created {
+        card.child(h("span.created-badge").text(t().created_by_you))
+    } else {
+        card
+    };
+    h("div.recent-card")
+        .child(card)
+        .child(
+            h("button.forget")
+                .attr("type", "button")
+                .attr("title", t().forget_room)
+                .attr("aria-label", t().forget_room)
+                .text("✕")
+                .on("click", move |_| {
+                    recent::forget(&id, &server);
+                    app(|a| a.known.retain(|r| r["id"].as_str() != Some(id.as_str())));
+                    render_mine();
+                }),
+        )
         .into()
 }
 
-/// Les salons du compte connecté.
+/// Un salon retenu sur un autre serveur : y aller change de serveur.
+fn elsewhere(r: &recent::Recent) -> Child {
+    let host = r
+        .server
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .to_owned();
+    let (id, server) = (r.id.clone(), r.server.clone());
+    let card = h("button.room-card")
+        .attr("type", "button")
+        .child(h("span.room-name").text(format!(
+            "{} {}",
+            if r.private { "🔒" } else { "#" },
+            r.name
+        )))
+        .child(h("span.room-meta").text(fill(
+            t().on_server,
+            &[
+                if host.is_empty() {
+                    t().this_site
+                } else {
+                    &host
+                },
+                &until(r.expires_at),
+            ],
+        )))
+        .click(move || {
+            let (id, server) = (id.clone(), server.clone());
+            async move {
+                if !server.is_empty() {
+                    recent::save_server(&server);
+                }
+                app(|a| a.server = server);
+                join_room(&id).await
+            }
+        });
+    remembered(card, &r.id, &r.server, r.created)
+}
+
+/// Vos salons : ceux dont se souvient l'appareil (créés ou visités), et
+/// ceux du compte connecté, retrouvés grâce à sa marque — tant qu'ils sont
+/// ouverts.
 pub fn render_mine() {
     let Some(list) = by_id("mine") else { return };
-    let rooms = app(|a| a.mine.clone());
+    let (mine, known, signed_in) = app(|a| (a.mine.clone(), a.known.clone(), a.account.is_some()));
+    let server = api_base();
+    let device = recent::list();
     scope("mine", || {
-        let items: Vec<Child> = if rooms.is_empty() {
-            vec![h("p.empty").text(t().my_rooms_empty).into()]
-        } else {
-            rooms.iter().map(room_card).collect()
-        };
+        let mut seen = std::collections::HashSet::new();
+        let mut items: Vec<Child> = Vec::new();
+        for r in known.iter().chain(&mine) {
+            let id = r["id"].as_str().unwrap_or_default();
+            if !seen.insert(id.to_owned()) {
+                continue;
+            }
+            match device.iter().find(|d| d.id == id && d.server == server) {
+                Some(d) => items.push(remembered(room_button(r), id, &server, d.created)),
+                None => items.push(room_card(r)),
+            }
+        }
+        items.extend(device.iter().filter(|d| d.server != server).map(elsewhere));
+        let show = signed_in || !items.is_empty();
+        for (id, hide) in [("mine-section", !show), ("forget-all", device.is_empty())] {
+            if let Some(el) = by_id(id) {
+                let _ = if hide {
+                    el.set_attribute("hidden", "")
+                } else {
+                    el.remove_attribute("hidden")
+                };
+            }
+        }
+        if items.is_empty() {
+            items.push(h("p.empty").text(t().my_rooms_empty).into());
+        }
         replace(&list, items);
     });
 }
@@ -605,11 +715,22 @@ pub fn render_people() {
         let _ = btn.set_attribute("title", if in_call { t.hang_up } else { t.join_call });
     }
     let Some(el) = by_id("members") else { return };
-    let mut people: Vec<(String, String, bool)> = vec![(r.me.clone(), me_name, in_call)];
-    let mut others: Vec<(String, String, bool)> = r
+    // L'empreinte de la clé qui signe ce qu'envoie chacun : à comparer de
+    // vive voix, comme celle du salon.
+    let signature = |public: Option<Vec<u8>>| public.map(|raw| crate::crypto::fingerprint(&raw));
+    let mut people: Vec<(String, String, bool, Option<String>)> = vec![(
+        r.me.clone(),
+        me_name,
+        in_call,
+        signature(Some(r.signer.public_raw().to_vec())),
+    )];
+    let mut others: Vec<(String, String, bool, Option<String>)> = r
         .peers
         .iter()
-        .map(|(id, p)| (id.clone(), r.name_of(id), p.voice))
+        .map(|(id, p)| {
+            let public = p.s.as_deref().and_then(crate::crypto::unb64);
+            (id.clone(), r.name_of(id), p.voice, signature(public))
+        })
         .collect();
     others.sort_by_key(|p| p.1.to_lowercase());
     people.extend(others);
@@ -627,9 +748,16 @@ pub fn render_people() {
                     .child(icon_btn(t.close, "✕").on("click", |_| toggle_members(Some(false))))
                     .into(),
                 h("ul")
-                    .children(people.iter().map(|(id, name, voice)| {
+                    .children(people.iter().map(|(id, name, voice, sig)| {
                         h("li.member.on")
                             .data("speaker", id)
+                            .attr(
+                                "title",
+                                match sig {
+                                    Some(sig) => fill(t.signature_of, &[sig]),
+                                    None => t.signature_missing.to_owned(),
+                                },
+                            )
                             .child(
                                 h("span.avatar-wrap")
                                     .child(avatar(id, name, ""))
@@ -645,7 +773,12 @@ pub fn render_people() {
                                             .attr("aria-label", t.admin)
                                             .text(" 👑")
                                     }))
-                                    .child(voice.then(|| h("small").text(" 🔊"))),
+                                    .child(voice.then(|| h("small").text(" 🔊")))
+                                    .child(sig.is_none().then(|| {
+                                        h("small.unsigned")
+                                            .attr("aria-label", t.signature_missing)
+                                            .text(" ⚠️")
+                                    })),
                             )
                             .child((i_am_admin && *id != me).then(|| {
                                 let (id, name) = (id.clone(), name.clone());

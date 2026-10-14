@@ -9,12 +9,28 @@ voir [Déploiement](#déploiement).
 
 ## Le principe
 
-- 🎭 **Un pseudonyme suffit**, et **rien n'est enregistré** : ni messages sur
-  l'appareil, ni base de données sur le serveur. Fermer la page, c'est tout
-  oublier.
+- 🎭 **Un pseudonyme suffit**, et **aucun message n'est enregistré** : ni sur
+  l'appareil, ni dans une base de données sur le serveur. Fermer la page, c'est
+  oublier messages, pseudonyme et clés.
+- 🔁 **On revient dans ses salons** ([`client/src/recent.rs`](client/src/recent.rs)) :
+  l'appareil retient les salons créés ou visités, avec leur serveur, jusqu'à
+  leur minuit — jamais un message, une clé ou un pseudonyme. Le hall les
+  affiche (« Vos salons ») ; un geste pour y revenir, « Oublier » ou « Tout
+  oublier » pour les effacer. Le serveur saisi sur GitHub Pages est retenu
+  aussi.
+- ✍️ **Tout est signé** ([`client/src/crypto.rs`](client/src/crypto.rs)) :
+  chaque membre tire, en entrant, une clé Ed25519 propre au salon et
+  l'annonce avec sa clé X25519. Tout ce qu'il envoie (messages,
+  modifications, suppressions, pseudonyme, photos, vocaux, signalisation
+  d'appel) est signé avec elle, en plus d'être chiffré : la signature couvre
+  le salon, le destinataire et un numéro d'envoi qui ne fait que croître.
+  Un envoi modifié, rejoué, détourné vers un autre salon ou un autre
+  destinataire, ou attribué à quelqu'un d'autre est écarté (et signalé).
+  L'empreinte de la clé de chacun s'affiche en survolant son nom, pour la
+  comparer de vive voix.
 - 🔑 **Se connecter avec un mot de passe**, que le navigateur retient (son
   gestionnaire de mots de passe, synchronisé entre appareils) : on retrouve
-  ses salons sur tous ses appareils, tant qu'ils existent. Le mot de passe ne
+  ses salons sur tous ses appareils, jusqu'à leur minuit. Le mot de passe ne
   quitte jamais l'appareil : WebCrypto en tire une graine (PBKDF2-SHA256,
   310 000 tours, salée par le pseudonyme), dont on tire une **marque** ; le
   serveur ne voit que cette marque, que chaque salon retient tant qu'il vit.
@@ -46,8 +62,11 @@ voir [Déploiement](#déploiement).
   recherche les filtre (sans tenir compte des accents ni des majuscules), et un
   nom qui n'existe pas encore se crée d'un geste. Un salon peut être **privé** :
   absent de la liste, joignable seulement par son lien.
-- 🌱 **Un salon ne vit que si quelqu'un y est** : le dernier qui part l'emporte
-  avec lui.
+- 🌱 **Un salon reste ouvert jusqu'à minuit**, même quand tout le monde est
+  parti : on peut y revenir (une nouvelle clé est tirée, l'ancienne est
+  partie avec le dernier présent). Un salon jamais rejoint disparaît au bout
+  d'une minute ; quand la place manque (5 000 salons), le salon vide depuis
+  le plus longtemps cède la sienne.
 - 🙈 **Pas d'historique** : le serveur ne garde aucun message, il relaie chaque
   jeton chiffré aux présents puis l'oublie. Qui arrive ne voit rien de ce qui
   s'est dit avant.
