@@ -144,53 +144,52 @@ pas les messages, pas la clé. Les photos font exception : il les vérifie au
 passage, en mémoire, puis les oublie. Comme tout serveur web, il voit les
 adresses IP qui se connectent.
 
-## Abonnements
+## Périodes payantes
 
-Deux formules, payées **chaque mois** avec Stripe ([`src/billing.rs`](src/billing.rs)),
-sans engagement et résiliables à tout moment. **Il n'existe aucune formule à
-l'année** : le prix part vers Stripe avec son rythme (`recurring[interval]=month`)
-à chaque paiement, sans prix configuré à l'avance qu'on pourrait changer, et un
-abonnement dont le rythme n'est pas mensuel n'ouvre aucun droit.
+On paie **une fois** une période ([`src/billing.rs`](src/billing.rs)), avec
+Stripe : **pas d'abonnement**, rien ne se renouvelle, rien à résilier.
 
-| Formule | Les salons de l'abonné durent | Prix |
-|---|---|---|
-| 3 jours | jusqu'au minuit qui clôt le 3ᵉ jour | 4,99 € / mois |
-| 7 jours | jusqu'au minuit qui clôt le 7ᵉ jour | 9,99 € / mois |
+| Période | Prix, en une fois |
+|---|---|
+| 3 jours | 4,99 € |
+| 7 jours | 9,99 € |
 
-Aucun message n'est gardé pour autant : on revient dans le salon, pas dans son
-historique. À minuit chez soi, l'écran d'un salon de plusieurs jours se vide,
-mais on y reste.
+Pendant sa période, les salons que crée l'acheteur restent ouverts jusqu'à sa
+fin — le minuit, chez lui, qui clôt le 3ᵉ ou le 7ᵉ jour — au lieu de
+disparaître à minuit. Aucun message n'est gardé pour autant ; à minuit chez
+soi, l'écran d'un salon de plusieurs jours se vide, mais on y reste. Le
+paiement passe par Stripe Checkout en `mode=payment` : un seul prélèvement.
 
-**Sans base de données** — tout tient dans le `localStorage` (signé, voir
-plus haut), Stripe, et SQLite si l'on veut :
+**Aucune base de données sur Heroku** — le `localStorage` (signé, voir plus
+haut), Stripe, et un fichier SQLite local :
 
-- **Stripe fait foi** pour les abonnements. Au retour du paiement, le
-  navigateur retrouve son abonnement par la session payée et le garde
-  (`alley.subscription.v1`, signé) ; il le présente, et le serveur le relit
-  chez Stripe (2 minutes en cache, en mémoire) en vérifiant qu'il appartient à
-  ce compte. Sur un autre appareil, la recherche de Stripe le retrouve. Aucun
-  webhook à régler.
+- **Stripe fait foi.** De retour du paiement, le navigateur retrouve sa
+  période par la session payée et garde l'identifiant du paiement
+  (`alley.pass.v1`, signé) ; il le présente, et le serveur le relit chez
+  Stripe (2 minutes en cache, en mémoire) : à ce compte, payé en entier, pas
+  remboursé. Sur un autre appareil, la recherche de Stripe le retrouve.
+  Aucun webhook à régler.
 - **Les salons de plusieurs jours** survivent aux redémarrages du serveur
   grâce aux navigateurs : chacun garde la description du salon signée par le
   serveur (identifiant, nom, type, fin) et la lui présente s'il l'a oublié ;
   il la vérifie avec sa propre clé et rouvre le salon. Une description
   modifiée, ou signée par une autre clé, ne rouvre rien. Il suffit que la clé
-  du serveur ne change pas : `ALLEY_SIGNING_KEY`.
-- **SQLite**, facultatif (`DATABASE_URL=sqlite://alley.db`) : sur un
-  hébergeur dont le disque dure, il garde aussi la clé et les salons de
-  plusieurs jours, qui rouvrent alors d'eux-mêmes. Rien n'en dépend : le
-  disque de Heroku s'efface à chaque redémarrage, et ça marche quand même.
+  ne change pas : `ALLEY_SIGNING_KEY`.
+- **SQLite** : le serveur n'utilise jamais de base externe, seulement un
+  fichier local (`ALLEY_SQLITE`, `alley.db` par défaut), même si
+  `DATABASE_URL` est réglé. Il garde la clé et les salons de plusieurs jours
+  tant que le disque dure ; rien n'en dépend (le disque de Heroku s'efface à
+  chaque redémarrage, et tout marche quand même).
 - **Qui paie** : un compte (pseudonyme + mot de passe). Le navigateur tire du
-  mot de passe un *secret d'abonnement*, envoyé dans le corps des requêtes ;
+  mot de passe un *secret de paiement*, envoyé dans le corps des requêtes ;
   Stripe n'en reçoit que l'empreinte. Le serveur ne connaît ni le pseudonyme
-  ni le mot de passe ; l'e-mail et la carte restent chez Stripe (Checkout,
-  puis le portail client pour résilier).
+  ni le mot de passe ; l'e-mail et la carte restent chez Stripe.
 
 API : `GET /api/v1/plans`, `POST /api/v1/billing/checkout` (`{secret, plan,
-return_to, subscription}`), `POST /api/v1/billing/status` (`{secret,
-subscription, session}`), `POST /api/v1/billing/portal`.
+tz, return_to, payment}`), `POST /api/v1/billing/status` (`{secret, payment,
+session}`).
 
-### Mettre en place les abonnements
+### Mettre en place les périodes payantes
 
 1. **`ALLEY_SIGNING_KEY`** : le bouton « Deploy to Heroku » et le
    déploiement automatique la tirent eux-mêmes. À la main :
@@ -198,12 +197,11 @@ subscription, session}`), `POST /api/v1/billing/portal`.
    une fois, puis ne plus y toucher.
 2. **Stripe → Développeurs → Clés API** : la clé secrète dans
    `STRIPE_SECRET_KEY` (*Settings → Config Vars* de l'app Heroku).
-3. **Stripe → Paramètres → Portail client** : l'activer (résiliation,
-   moyens de paiement, factures), une fois.
 
-C'est tout : ni base, ni webhook. Sans `STRIPE_SECRET_KEY` (ou sans clé de
-signature durable), l'offre n'apparaît pas. Essayez d'abord avec une clé de
-test (`sk_test_…`) et la carte `4242 4242 4242 4242`.
+C'est tout : ni base, ni webhook, ni portail. Sans `STRIPE_SECRET_KEY` (ou
+sans clé de signature durable), l'offre n'apparaît pas. Essayez d'abord avec
+une clé de test (`sk_test_…`) et la carte `4242 4242 4242 4242`. Un
+remboursement, fait depuis le tableau de bord de Stripe, retire la période.
 
 ## Mettre Alley sur Heroku
 
