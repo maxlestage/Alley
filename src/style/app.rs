@@ -2035,6 +2035,64 @@ pub fn app() -> String {
         &[("padding", "8px 0"), ("text-align", "left")],
     );
     s.rule(".mine[hidden], .mine [hidden]", &[("display", "none")]);
+    // Les abonnements.
+    s.rule(
+        ".plans",
+        &[
+            ("display", "grid"),
+            ("gap", "8px"),
+            ("margin-top", "28px"),
+            ("padding", "16px"),
+            ("border-radius", "16px"),
+            ("border", "1px solid var(--accent)"),
+            ("background", "var(--side)"),
+        ],
+    );
+    s.rule(".plans[hidden]", &[("display", "none")]);
+    s.rule(".plans h2", &[("margin", "0"), ("font-size", "18px")]);
+    s.rule(".plans p", &[("margin", "0")]);
+    s.rule(
+        ".plan-cards",
+        &[
+            ("display", "grid"),
+            (
+                "grid-template-columns",
+                "repeat(auto-fit, minmax(180px, 1fr))",
+            ),
+            ("gap", "10px"),
+            ("margin-top", "4px"),
+        ],
+    );
+    s.rule(
+        ".plan-card",
+        &[
+            ("display", "grid"),
+            ("gap", "6px"),
+            ("padding", "14px"),
+            ("border-radius", "14px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--elev)"),
+        ],
+    );
+    s.rule(".plan-card strong", &[("font-size", "17px")]);
+    s.rule(".plan-card .price", &[("color", "var(--muted)")]);
+    s.rule(
+        ".plan-card button, #manage",
+        &[
+            ("min-height", "44px"),
+            ("padding", "0 18px"),
+            ("border-radius", "12px"),
+            ("background", "var(--accent)"),
+            ("color", "var(--accent-fg)"),
+            ("font-weight", "700"),
+        ],
+    );
+    s.rule(
+        ".plan-card button:disabled",
+        &[("opacity", ".5"), ("cursor", "not-allowed")],
+    );
+    s.rule(".subscribed", &[("font-weight", "600")]);
+    s.rule("#manage", &[("justify-self", "start")]);
     s.rule(
         ".section-head",
         &[

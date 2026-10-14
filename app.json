@@ -38,7 +38,21 @@
     "ALLEY_ICE_SERVERS": {
       "description": "Facultatif : des serveurs TURN pour les appels sur les réseaux qui bloquent le pair-à-pair (JSON RTCIceServer[]).",
       "required": false
+    },
+    "STRIPE_SECRET_KEY": {
+      "description": "Abonnements (facultatif) : la clé secrète Stripe (sk_live_… ou sk_test_…). Sans elle, l'offre n'est pas proposée.",
+      "required": false
+    },
+    "STRIPE_WEBHOOK_SECRET": {
+      "description": "Abonnements (facultatif) : le secret du webhook Stripe (whsec_…) pour https://<votre-app>.herokuapp.com/api/v1/billing/webhook.",
+      "required": false
     }
   },
-  "success_url": "/"
+  "success_url": "/",
+  "addons": [
+    {
+      "plan": "heroku-postgresql:essential-0",
+      "as": "DATABASE"
+    }
+  ]
 }
