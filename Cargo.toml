@@ -30,6 +30,9 @@ getrandom = "0.2"
 base64 = "0.22"
 sha2 = "0.10"
 aes-gcm = "0.10"
+# Le serveur signe ce qu'il dit d'un salon : l'appareil qui le retient
+# vérifie que personne ne l'a modifié.
+ed25519-dalek = "2"
 tracing = "0.1"
 # La modération des images : les modèles ONNX, exécutés en Rust.
 tract-onnx = "0.23.8"
