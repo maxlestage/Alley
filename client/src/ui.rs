@@ -1032,7 +1032,7 @@ fn composer() -> El {
         .attr("enterkeyhint", if touch() { "enter" } else { "send" })
         .attr("autocomplete", "off")
         .attr("aria-label", t.your_message)
-        .attr("maxlength", "20000")
+        .attr("maxlength", "50000")
         .el();
     let file = h("input")
         .attr("type", "file")
@@ -1081,7 +1081,29 @@ fn composer() -> El {
             let Some(k) = e.dyn_ref::<KeyboardEvent>() else {
                 return;
             };
-            if k.key() == "Enter" && !k.shift_key() && !touch() && !k.is_composing() {
+            // Dans un bloc de code ouvert, Entrée va à la ligne et Tab indente.
+            let in_code = in_code_block(&input2);
+            if k.key() == "Tab" && in_code && !k.shift_key() {
+                e.prevent_default();
+                insert_text(&input2, "    ", 4);
+            } else if k.key() == "Enter" && !k.shift_key() && !touch() && !k.is_composing() {
+                if in_code {
+                    // Garde l'indentation de la ligne courante.
+                    let area: &web_sys::HtmlTextAreaElement = input2.unchecked_ref();
+                    let caret = area.selection_start().ok().flatten().unwrap_or(0) as usize;
+                    let before: Vec<u16> = area.value().encode_utf16().take(caret).collect();
+                    let before = String::from_utf16_lossy(&before);
+                    let line = before.rsplit('\n').next().unwrap_or_default();
+                    let indent: String = line
+                        .chars()
+                        .take_while(|c| *c == ' ' || *c == '\t')
+                        .collect();
+                    e.prevent_default();
+                    let text = format!("\n{indent}");
+                    let n = text.encode_utf16().count();
+                    insert_text(&input2, &text, n);
+                    return;
+                }
                 e.prevent_default();
                 submit();
             } else if k.key() == "Escape" {
@@ -1132,6 +1154,46 @@ fn composer() -> El {
             .text("➤")
             .on("click", move |_| submit())
     };
+    // Coller du code (plusieurs lignes) : il est mis dans un bloc coloré.
+    {
+        let input2 = input.clone();
+        listen(&input, "paste", move |e: Event| {
+            let data = get(&e, "clipboardData");
+            let Some(text) = call(&data, "getData", &[JsValue::from_str("text/plain")])
+                .ok()
+                .and_then(|v| v.as_string())
+            else {
+                return;
+            };
+            if text.trim().lines().count() < 2
+                || text.contains("```")
+                || in_code_block(&input2)
+                || crate::highlight::detect(&text) == "text"
+            {
+                return;
+            }
+            e.prevent_default();
+            let block = fence(&text);
+            let n = block.encode_utf16().count();
+            insert_text(&input2, &block, n);
+        });
+    }
+    let input3 = input.clone();
+    let code_btn = icon_btn(t.insert_code, "</>")
+        .class("code-btn")
+        .on("click", move |_| {
+            // Le texte sélectionné devient un bloc ; sinon un bloc vide, le
+            // curseur dedans.
+            let selected = selected_text(&input3);
+            if selected.is_empty() {
+                insert_text(&input3, "```\n\n```", 4);
+            } else {
+                let block = fence(&selected);
+                let n = block.encode_utf16().count();
+                insert_text(&input3, &block, n);
+            }
+            focus(&input3);
+        });
     h("div.composer").child(h("div#bar")).child(
         h("div.input-row")
             .child(
@@ -1144,6 +1206,7 @@ fn composer() -> El {
                     }),
             )
             .child(file)
+            .child(code_btn)
             .child(input)
             .child(can_record.then(|| {
                 icon_btn(t.voice_message, "🎤")
@@ -1582,15 +1645,18 @@ fn format_text(text: &str) -> Vec<Child> {
     for (i, part) in text.split("```").enumerate() {
         if i % 2 == 1 {
             // Un bloc de code (la première ligne peut nommer le langage).
-            let body = match part.split_once('\n') {
-                Some((lang, rest)) if lang.chars().all(|c| c.is_ascii_alphanumeric()) => rest,
-                _ => part,
+            let (named, body) = match part.split_once('\n') {
+                Some((lang, rest))
+                    if lang
+                        .trim()
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || "+#-".contains(c)) =>
+                {
+                    (lang.trim(), rest)
+                }
+                _ => ("", part),
             };
-            out.push(
-                h("pre")
-                    .child(h("code").text(body.trim_end_matches('\n')))
-                    .into(),
-            );
+            out.push(code_block(named, body.trim_end_matches('\n')).into());
             continue;
         }
         let lines: Vec<&str> = part.split('\n').collect();
@@ -1606,6 +1672,110 @@ fn format_text(text: &str) -> Vec<Child> {
         }
     }
     out
+}
+
+/// Un bloc de code coloré : le langage (nommé, ou deviné), le nombre de
+/// lignes, un bouton pour copier, et les lignes numérotées.
+fn code_block(named: &str, code: &str) -> El {
+    use crate::highlight::{self, Class};
+    let t = t();
+    let lang = highlight::language(named).unwrap_or_else(|| highlight::detect(code));
+    let tokens = highlight::highlight(code, lang);
+    let lines = highlight::lines(&tokens);
+    let count = lines.len();
+    let source = code.to_owned();
+    let label = if lang == "text" && !named.is_empty() {
+        named.to_owned()
+    } else {
+        highlight::label(lang).to_owned()
+    };
+    h("div.codeblock")
+        .data("lang", lang)
+        .child(
+            h("div.code-head")
+                .child(h("span.code-lang").text(label))
+                .child(h("span.code-lines").text(fill(
+                    if count <= 1 {
+                        t.lines_one
+                    } else {
+                        t.lines_many
+                    },
+                    &[&count.to_string()],
+                )))
+                .child(h("span.spacer"))
+                .child(
+                    h("button.code-copy")
+                        .attr("type", "button")
+                        .attr("aria-label", t.copy_code)
+                        .text(format!("⧉ {}", t.copy_code))
+                        .click(move || {
+                            let code = source.clone();
+                            async move { copy(&code, crate::i18n::t().code_copied).await }
+                        }),
+                ),
+        )
+        .child(
+            h("pre.code").child(h("code").children(lines.iter().map(|line| {
+                h("span.line").children(line.iter().map(|(class, text)| -> Child {
+                    if *class == Class::Plain {
+                        (*text).into()
+                    } else {
+                        h("span").class(class.css()).text(*text).into()
+                    }
+                }))
+            }))),
+        )
+}
+
+/// Le curseur est-il dans un bloc de code ouvert (```` ``` ```` impair) ?
+fn in_code_block(input: &Element) -> bool {
+    let Some(area) = input.dyn_ref::<web_sys::HtmlTextAreaElement>() else {
+        return false;
+    };
+    // La position du curseur est comptée en unités UTF-16.
+    let caret = area.selection_start().ok().flatten().unwrap_or(0) as usize;
+    let before: Vec<u16> = area.value().encode_utf16().take(caret).collect();
+    String::from_utf16_lossy(&before).matches("```").count() % 2 == 1
+}
+
+/// Remplace la sélection par `text` et place le curseur `caret` unités
+/// UTF-16 après son début.
+fn insert_text(input: &Element, text: &str, caret: usize) {
+    let Some(area) = input.dyn_ref::<web_sys::HtmlTextAreaElement>() else {
+        return;
+    };
+    let units: Vec<u16> = area.value().encode_utf16().collect();
+    let start = area.selection_start().ok().flatten().unwrap_or(0) as usize;
+    let end = area.selection_end().ok().flatten().unwrap_or(0) as usize;
+    let (start, end) = (start.min(units.len()), end.min(units.len()).max(start));
+    let mut value = String::from_utf16_lossy(&units[..start]);
+    value.push_str(text);
+    value.push_str(&String::from_utf16_lossy(&units[end..]));
+    area.set_value(&value);
+    let at = (start + caret) as u32;
+    let _ = area.set_selection_range(at, at);
+    let _ = input.dispatch_event(&Event::new("input").expect("événement"));
+}
+
+/// Le texte sélectionné dans la zone de saisie.
+fn selected_text(input: &Element) -> String {
+    let Some(area) = input.dyn_ref::<web_sys::HtmlTextAreaElement>() else {
+        return String::new();
+    };
+    let units: Vec<u16> = area.value().encode_utf16().collect();
+    let start = area.selection_start().ok().flatten().unwrap_or(0) as usize;
+    let end = area.selection_end().ok().flatten().unwrap_or(0) as usize;
+    if start >= end || end > units.len() {
+        return String::new();
+    }
+    String::from_utf16_lossy(&units[start..end])
+}
+
+/// Entoure `code` d'un bloc ```` ``` ```` qui nomme son langage.
+fn fence(code: &str) -> String {
+    let lang = crate::highlight::detect(code);
+    let tag = if lang == "text" { "" } else { lang };
+    format!("```{tag}\n{}\n```", code.trim_end_matches('\n'))
 }
 
 fn only_emoji(t: &str) -> bool {
