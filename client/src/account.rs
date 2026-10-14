@@ -38,11 +38,15 @@ pub async fn seed(pseudonym: &str, password: &str) -> Result<Vec<u8>, JsValue> {
 pub async fn sign_in(
     pseudonym: &str,
     password: &str,
-) -> Result<(String, crate::vault::Signer), JsValue> {
+) -> Result<(crate::model::Account, crate::vault::Signer), JsValue> {
     let seed = seed(pseudonym, password).await?;
     let tag = crypto::account_tag(&seed);
     let signer = crate::vault::Signer::new(&tag, &seed);
-    Ok((tag, signer))
+    let account = crate::model::Account {
+        tag,
+        billing: crypto::billing_secret(&seed),
+    };
+    Ok((account, signer))
 }
 
 /// Propose au navigateur d'enregistrer le pseudonyme et le mot de passe

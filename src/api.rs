@@ -55,6 +55,10 @@ pub struct NewRoom {
     /// le salon disparaît à minuit chez lui.
     #[serde(default)]
     pub tz: i64,
+    /// Le secret d'abonnement du compte ([`crate::billing`]) : ses salons
+    /// durent 3 ou 7 jours.
+    #[serde(default)]
+    pub billing: Option<String>,
 }
 
 /// Jetons relayés par connexion, au plus, par fenêtre de 10 s (contre
@@ -101,8 +105,17 @@ async fn create(req: Request) -> (u16, Json<Value>) {
             Json(json!({ "error": "forbidden_name", "reason": category.code() })),
         );
     }
-    match rooms.create(&body.name, body.private, body.tz) {
-        Some(room) => (201, Json(room)),
+    let days = crate::billing::days_for(req.db(), body.billing.as_deref()).await;
+    match rooms.create(&body.name, body.private, body.tz, days) {
+        Some(room) => {
+            // Un salon de plusieurs jours survit aux redémarrages.
+            if let Some(kept) = room["id"].as_str().and_then(|id| rooms.kept(id))
+                && let Err(e) = crate::billing::keep(req.db(), kept).await
+            {
+                tracing::warn!("salon de plusieurs jours non gardé : {e}");
+            }
+            (201, Json(room))
+        }
         None => fail(503, "too_many_rooms"),
     }
 }
