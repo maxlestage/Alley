@@ -1,48 +1,42 @@
-//! Les abonnements payants, avec **Stripe**, **au mois seulement** — et
-//! **sans base de données** :
+//! Les périodes payantes, avec **Stripe** : on paie **une fois** une période
+//! de 3 ou de 7 jours — ni abonnement, ni renouvellement, rien à résilier.
 //!
-//! | Formule | Salons qui durent | Prix |
-//! |---|---|---|
-//! | `3d` | 3 jours | 4,99 € par mois |
-//! | `7d` | 7 jours | 9,99 € par mois |
+//! | Période | Prix, en une fois |
+//! |---|---|
+//! | `3d` : 3 jours | 4,99 € |
+//! | `7d` : 7 jours | 9,99 € |
 //!
-//! Il n'existe **aucune formule à l'année** : le prix est envoyé à Stripe
-//! avec son rythme (`recurring[interval]=month`, tous les mois) à chaque
-//! paiement, sans prix configuré à l'avance qu'on pourrait changer, et un
-//! abonnement dont le rythme ne serait pas mensuel n'ouvre aucun droit.
-//!
-//! Un abonnement apporte une chose : les salons que l'abonné crée restent
-//! ouverts 3 ou 7 jours au lieu de disparaître à minuit. **Aucun message
-//! n'est gardé** pour autant.
+//! Pendant sa période, les salons que crée l'acheteur restent ouverts jusqu'à
+//! la fin de celle-ci (le minuit, chez lui, qui clôt le 3ᵉ ou le 7ᵉ jour) au
+//! lieu de disparaître à minuit. **Aucun message n'est gardé** pour autant.
+//! Le paiement est un paiement unique (Stripe Checkout, `mode=payment`) :
+//! rien n'est jamais reprélevé.
 //!
 //! **Rien n'est gardé sur le serveur** :
 //!
-//! - **Stripe fait foi** pour les abonnements. Le navigateur garde
-//!   l'identifiant de son abonnement (dans son `localStorage`, signé) et le
-//!   présente ; le serveur le relit chez Stripe (quelques minutes en cache,
-//!   en mémoire) et vérifie qu'il appartient bien à ce compte. Sur un autre
-//!   appareil, le serveur le retrouve par la recherche de Stripe. Aucun
-//!   webhook à régler.
+//! - **Stripe fait foi.** De retour du paiement, le navigateur retrouve sa
+//!   période par la session payée, et garde l'identifiant du paiement dans son
+//!   `localStorage` (signé). Il le présente ; le serveur le relit chez Stripe
+//!   (quelques minutes en cache, en mémoire), vérifie qu'il appartient à ce
+//!   compte, qu'il est payé et pas remboursé. Sur un autre appareil, la
+//!   recherche de Stripe le retrouve.
 //! - Les **salons de plusieurs jours** survivent aux redémarrages grâce aux
 //!   navigateurs : chacun garde la description du salon signée par le
-//!   serveur, et la lui présente s'il l'a oublié ([`Rooms::revive`]). Il
-//!   suffit que la clé de signature du serveur ne change pas :
-//!   `ALLEY_SIGNING_KEY` (64 caractères hexadécimaux).
-//! - **SQLite**, facultatif (`DATABASE_URL=sqlite://alley.db`, pour un
-//!   hébergeur dont le disque dure) : il garde en plus la clé de signature et
-//!   les salons de plusieurs jours, qui rouvrent alors d'eux-mêmes. Rien n'en
-//!   dépend : sur Heroku, dont le disque s'efface à chaque redémarrage, le
-//!   `localStorage` et Stripe suffisent.
+//!   serveur, et la lui présente s'il l'a oubliée ([`Rooms::revive`]). Il
+//!   suffit que la clé de signature ne change pas : `ALLEY_SIGNING_KEY`.
+//! - **SQLite** (un fichier local, `alley.db`) garde en plus la clé de
+//!   signature et les salons de plusieurs jours tant que le disque dure. Rien
+//!   n'en dépend : sur Heroku, dont le disque s'efface à chaque redémarrage,
+//!   le `localStorage` et Stripe suffisent.
 //!
 //! Qui paie ? Le compte (pseudonyme + mot de passe) : le navigateur en tire
-//! un **secret d'abonnement** (HKDF de la graine du mot de passe), envoyé
-//! dans le corps des requêtes, jamais dans une adresse. Stripe n'en reçoit
-//! que l'empreinte ([`billing_id`]) ; le serveur ne connaît ni le pseudonyme
-//! ni le mot de passe. L'e-mail et la carte restent chez Stripe (Checkout,
-//! puis son portail client pour résilier).
+//! un **secret de paiement** (HKDF de la graine du mot de passe), envoyé dans
+//! le corps des requêtes, jamais dans une adresse. Stripe n'en reçoit que
+//! l'empreinte ([`billing_id`]) ; le serveur ne connaît ni le pseudonyme ni
+//! le mot de passe. L'e-mail et la carte restent chez Stripe.
 //!
 //! Réglage : `STRIPE_SECRET_KEY`, et une clé de signature durable
-//! (`ALLEY_SIGNING_KEY`, ou SQLite). Sans eux, l'offre n'est pas proposée.
+//! (`ALLEY_SIGNING_KEY`). Sans eux, l'offre n'est pas proposée.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -53,15 +47,15 @@ use paquets::prelude::*;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::rooms::{Kept, Rooms, now_ms};
+use crate::rooms::{Kept, Rooms, next_midnight, now_ms};
 
-/// Une formule d'abonnement.
+/// Une période qu'on peut payer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Plan {
     pub id: &'static str,
-    /// Combien de jours durent les salons de l'abonné.
+    /// Combien de jours elle dure.
     pub days: u32,
-    /// Le prix mensuel, en centimes d'euro.
+    /// Son prix, payé une fois, en centimes d'euro.
     pub cents: u32,
 }
 
@@ -79,14 +73,20 @@ pub const PLANS: [Plan; 2] = [
 ];
 
 pub const CURRENCY: &str = "eur";
-/// Le seul rythme de paiement : chaque mois.
-pub const INTERVAL: &str = "month";
 
 pub fn plan(id: &str) -> Option<Plan> {
     PLANS.into_iter().find(|p| p.id == id)
 }
 
-/// Un salon de plusieurs jours, gardé dans SQLite si l'on en a un.
+const DAY_MS: i64 = 24 * 3600 * 1000;
+
+/// La fin d'une période commencée à `start` (millisecondes) chez quelqu'un
+/// décalé de `offset_min` minutes : le minuit qui clôt son dernier jour.
+pub fn period_end(start: i64, offset_min: i64, days: u32) -> i64 {
+    next_midnight(start, offset_min) + i64::from(days.max(1) - 1) * DAY_MS
+}
+
+/// Un salon de plusieurs jours, gardé dans SQLite.
 #[model(table = "alley_rooms")]
 pub struct KeptRoom {
     #[memoire(primary_key)]
@@ -127,7 +127,7 @@ pub fn env_signing_key() -> Option<[u8; 32]> {
     unhex(text.trim()).and_then(|b| b.try_into().ok())
 }
 
-/// L'identifiant d'abonnement d'un compte : l'empreinte de son secret
+/// L'identifiant de paiement d'un compte : l'empreinte de son secret
 /// (64 caractères hexadécimaux), ou `None` si ce n'en est pas un.
 pub fn billing_id(secret: &str) -> Option<String> {
     let ok = secret.len() == 64 && secret.bytes().all(|b| b.is_ascii_hexdigit());
@@ -176,7 +176,7 @@ pub async fn restore(db: &Db, rooms: &Rooms) -> paquets::Result<()> {
     Ok(())
 }
 
-/// Garde un salon de plusieurs jours dans SQLite, si l'on en a un.
+/// Garde un salon de plusieurs jours dans SQLite.
 pub async fn keep(db: &Db, kept: Kept) -> paquets::Result<()> {
     if db.kind() == "memory" {
         return Ok(());
@@ -196,82 +196,73 @@ pub async fn keep(db: &Db, kept: Kept) -> paquets::Result<()> {
     Ok(())
 }
 
-/// Ce que Stripe dit d'un abonnement d'Alley.
+/// Une période payée, telle que Stripe la décrit.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Entitlement {
-    pub subscription: String,
-    pub customer: String,
+pub struct Pass {
+    /// Le paiement (`pi_…`).
+    pub payment: String,
     pub plan: String,
+    /// `paid`, `refunded` ou `pending`.
     pub status: String,
-    /// La fin de la période payée, en millisecondes.
-    pub period_end: i64,
+    /// Son début et sa fin, en millisecondes.
+    pub start: i64,
+    pub end: i64,
 }
 
-impl Entitlement {
-    /// Ouvre-t-il des droits maintenant ? Actif ; ou un paiement en retard,
-    /// jusqu'à la fin du mois déjà payé.
+impl Pass {
+    /// Ouvre-t-elle des droits maintenant ?
     pub fn active(&self, now: i64) -> bool {
-        match self.status.as_str() {
-            "active" | "trialing" => true,
-            "past_due" => now < self.period_end,
-            _ => false,
-        }
-    }
-
-    /// Combien de jours durent les salons qu'il crée.
-    pub fn days(&self, now: i64) -> u32 {
-        match plan(&self.plan) {
-            Some(p) if self.active(now) => p.days,
-            _ => 1,
-        }
+        self.status == "paid" && now < self.end
     }
 
     pub fn to_json(&self, now: i64) -> Value {
         json!({
             "active": self.active(now),
             "plan": self.plan,
-            "days": self.days(now),
+            "days": plan(&self.plan).map_or(1, |p| p.days),
             "status": self.status,
-            "until": self.period_end,
-            "subscription": self.subscription,
+            "until": self.end,
+            "payment": self.payment,
         })
     }
 }
 
-/// Lit un abonnement de Stripe : `None` s'il n'est pas à ce compte
-/// (`billing`) ou pas d'Alley. Un rythme autre que mensuel n'ouvre aucun
-/// droit (`not_monthly`).
-pub fn entitlement(sub: &Value, billing: &str) -> Option<Entitlement> {
-    let meta = &sub["metadata"];
+/// Lit un paiement de Stripe (un `PaymentIntent`, avec `latest_charge`) :
+/// `None` s'il n'est pas à ce compte (`billing`) ou pas d'Alley.
+pub fn pass(pi: &Value, billing: &str) -> Option<Pass> {
+    let meta = &pi["metadata"];
     if meta["alley_billing"].as_str() != Some(billing) {
         return None;
     }
     let plan = plan(meta["alley_plan"].as_str()?)?;
-    let item = &sub["items"]["data"][0];
-    let recurring = &item["price"]["recurring"];
-    let monthly =
-        recurring["interval"] == INTERVAL && recurring["interval_count"].as_u64().unwrap_or(1) == 1;
-    let status = if monthly {
-        sub["status"].as_str().unwrap_or("incomplete")
-    } else {
-        "not_monthly"
+    let offset: i64 = meta["alley_tz"]
+        .as_str()
+        .and_then(|t| t.parse().ok())
+        .unwrap_or(0);
+    let start = pi["created"].as_i64()? * 1000;
+    let charge = &pi["latest_charge"];
+    // Le montant entier, en euros : un paiement d'un autre montant n'ouvre
+    // aucun droit.
+    let full = pi["amount_received"].as_u64() == Some(u64::from(plan.cents))
+        && pi["currency"].as_str() == Some(CURRENCY);
+    let refunded = charge["refunded"].as_bool() == Some(true)
+        || charge["amount_refunded"].as_u64().unwrap_or(0) > 0;
+    let status = match pi["status"].as_str() {
+        _ if refunded => "refunded",
+        Some("succeeded") if full => "paid",
+        _ => "pending",
     };
-    let period_end = sub["current_period_end"]
-        .as_i64()
-        .or_else(|| item["current_period_end"].as_i64())
-        .unwrap_or_default()
-        * 1000;
-    Some(Entitlement {
-        subscription: sub["id"].as_str()?.to_owned(),
-        customer: sub["customer"].as_str().unwrap_or_default().to_owned(),
+    Some(Pass {
+        payment: pi["id"].as_str()?.to_owned(),
         plan: plan.id.to_owned(),
         status: status.to_owned(),
-        period_end,
+        start,
+        end: period_end(start, offset, plan.days),
     })
 }
 
-/// Un identifiant de Stripe (`sub_…`, `cs_…`) : rien d'autre ne part dans
-/// une adresse de son API.
+/// Un identifiant de Stripe (`pi_…`, `cs_…`) : rien d'autre ne part dans une
+/// adresse de son API.
 fn stripe_id(id: &str, prefix: &str) -> bool {
     id.starts_with(prefix)
         && id.len() < 255
@@ -361,17 +352,16 @@ impl Stripe {
 const CACHE: Duration = Duration::from_secs(120);
 
 /// Les réponses de Stripe gardées en mémoire : quand, et ce qu'il a dit.
-type Cache = HashMap<String, (Instant, Option<Entitlement>)>;
+type Cache = HashMap<String, (Instant, Option<Pass>)>;
 
-/// Le réglage des abonnements, dans l'état de l'application.
+/// Le réglage des paiements, dans l'état de l'application.
 #[derive(Clone)]
 pub struct Billing {
     pub stripe: Option<Stripe>,
-    /// La clé de signature des salons est-elle durable (configuration, ou
-    /// SQLite) ? Sans elle, un salon de plusieurs jours ne pourrait pas
-    /// rouvrir après un redémarrage : l'offre n'est alors pas proposée.
+    /// La clé de signature des salons est-elle durable ? Sans elle, un salon
+    /// de plusieurs jours ne pourrait pas rouvrir après un redémarrage :
+    /// l'offre n'est alors pas proposée.
     durable: Arc<AtomicBool>,
-    /// Ce que Stripe a dit d'un compte, pour quelques minutes.
     cache: Arc<Mutex<Cache>>,
 }
 
@@ -384,27 +374,30 @@ impl Billing {
         }
     }
 
-    /// Au démarrage : avec SQLite, la clé de signature y est gardée.
+    /// Au démarrage : SQLite garde la clé de signature, sauf sur un
+    /// hébergeur dont le disque s'efface (Heroku) — il faut alors
+    /// `ALLEY_SIGNING_KEY`.
     pub fn set_database(&self, kind: &str) {
-        if kind != "memory" {
+        let ephemeral_disk = std::env::var_os("DYNO").is_some();
+        if kind != "memory" && !ephemeral_disk {
             self.durable.store(true, Ordering::Relaxed);
         }
         if self.stripe.is_some() && !self.durable.load(Ordering::Relaxed) {
             tracing::warn!(
-                "abonnements désactivés : réglez ALLEY_SIGNING_KEY (64 caractères hexadécimaux), \
+                "paiements désactivés : réglez ALLEY_SIGNING_KEY (64 caractères hexadécimaux), \
                  sans quoi les salons de plusieurs jours ne rouvriraient pas après un redémarrage"
             );
         }
     }
 
-    /// Peut-on vendre un abonnement ? Stripe, et une clé de signature durable.
+    /// Peut-on vendre une période ? Stripe, et une clé de signature durable.
     pub fn ready(&self) -> Option<&Stripe> {
         self.stripe
             .as_ref()
             .filter(|_| self.durable.load(Ordering::Relaxed))
     }
 
-    fn cached(&self, key: &str) -> Option<Option<Entitlement>> {
+    fn cached(&self, key: &str) -> Option<Option<Pass>> {
         let cache = self.cache.lock().unwrap();
         cache
             .get(key)
@@ -412,20 +405,20 @@ impl Billing {
             .map(|(_, e)| e.clone())
     }
 
-    fn remember(&self, key: &str, value: Option<Entitlement>) {
+    fn remember(&self, key: &str, value: Option<Pass>) {
         let mut cache = self.cache.lock().unwrap();
         cache.retain(|_, (at, _)| at.elapsed() < CACHE);
         cache.insert(key.to_owned(), (Instant::now(), value));
     }
 
-    /// L'abonnement d'un compte, d'après Stripe : celui que le navigateur
-    /// présente (`subscription`), sinon celui que la recherche de Stripe
-    /// retrouve (un autre appareil) — un actif d'abord s'il y en a plusieurs.
+    /// La période d'un compte, d'après Stripe : celle que le navigateur
+    /// présente (`payment`), sinon celle que la recherche de Stripe retrouve
+    /// (un autre appareil) — celle qui finit le plus tard parmi les actives.
     pub async fn lookup(
         &self,
         secret: &str,
-        subscription: Option<&str>,
-    ) -> Result<Option<Entitlement>, String> {
+        payment: Option<&str>,
+    ) -> Result<Option<Pass>, String> {
         let Some(stripe) = self.stripe.as_ref() else {
             return Ok(None);
         };
@@ -433,18 +426,18 @@ impl Billing {
             return Ok(None);
         };
         let now = now_ms();
-        if let Some(id) = subscription.filter(|id| stripe_id(id, "sub_")) {
+        if let Some(id) = payment.filter(|id| stripe_id(id, "pi_")) {
             let key = format!("{billing}:{id}");
             let found = match self.cached(&key) {
                 Some(found) => found,
                 None => {
-                    let path = format!("/v1/subscriptions/{id}");
-                    let (status, sub) = stripe.call("GET", &path, Vec::new()).await?;
+                    let path = format!("/v1/payment_intents/{id}?expand[]=latest_charge");
+                    let (status, pi) = stripe.call("GET", &path, Vec::new()).await?;
                     if status != 200 && status != 404 {
                         return Err(format!("Stripe {status}"));
                     }
                     let found = if status == 200 {
-                        entitlement(&sub, &billing)
+                        pass(&pi, &billing)
                     } else {
                         None
                     };
@@ -452,31 +445,31 @@ impl Billing {
                     found
                 }
             };
-            if found.as_ref().is_some_and(|e| e.active(now)) {
+            if found.as_ref().is_some_and(|p| p.active(now)) {
                 return Ok(found);
             }
         }
         if let Some(found) = self.cached(&billing) {
             return Ok(found);
         }
-        let query = encode(&format!("metadata['alley_billing']:'{billing}'"));
-        let path = format!("/v1/subscriptions/search?query={query}&limit=20");
+        let query = encode(&format!(
+            "metadata['alley_billing']:'{billing}' AND status:'succeeded'"
+        ));
+        let path = format!(
+            "/v1/payment_intents/search?query={query}&limit=20&expand[]=data.latest_charge"
+        );
         let list = stripe.ok("GET", &path, Vec::new()).await?;
-        let mut found: Vec<Entitlement> = list["data"]
+        let mut found: Vec<Pass> = list["data"]
             .as_array()
-            .map(|subs| {
-                subs.iter()
-                    .filter_map(|s| entitlement(s, &billing))
-                    .collect()
-            })
+            .map(|all| all.iter().filter_map(|pi| pass(pi, &billing)).collect())
             .unwrap_or_default();
-        found.sort_by_key(|e| (!e.active(now), -e.period_end));
+        found.sort_by_key(|p| (!p.active(now), -p.end));
         let best = found.into_iter().next();
         self.remember(&billing, best.clone());
         Ok(best)
     }
 
-    /// Oublie ce qu'on sait d'un compte (après un paiement, avant le portail).
+    /// Oublie ce qu'on sait d'un compte (après un paiement).
     fn forget(&self, secret: &str) {
         if let Some(billing) = billing_id(secret) {
             self.cache
@@ -486,18 +479,17 @@ impl Billing {
         }
     }
 
-    /// Combien de jours durent les salons que crée ce compte (1 sans
-    /// abonnement, ou si Stripe ne répond pas).
-    pub async fn days_for(&self, secret: Option<&str>, subscription: Option<&str>) -> u32 {
-        let (Some(_), Some(secret)) = (self.ready(), secret) else {
-            return 1;
-        };
-        match self.lookup(secret, subscription).await {
-            Ok(Some(e)) => e.days(now_ms()),
-            Ok(None) => 1,
+    /// Jusqu'à quand restent ouverts les salons que crée ce compte : la fin
+    /// de sa période payée, ou `None` (minuit).
+    pub async fn until_for(&self, secret: Option<&str>, payment: Option<&str>) -> Option<i64> {
+        self.ready()?;
+        let now = now_ms();
+        match self.lookup(secret?, payment).await {
+            Ok(Some(p)) if p.active(now) => Some(p.end),
+            Ok(_) => None,
             Err(e) => {
                 tracing::warn!("{e}");
-                1
+                None
             }
         }
     }
@@ -533,24 +525,26 @@ pub struct Checkout {
     pub lang: String,
     #[serde(default)]
     pub return_to: String,
-    /// L'abonnement que le navigateur connaît déjà.
+    /// Le décalage horaire de l'acheteur, en minutes : sa période finit à
+    /// minuit chez lui.
     #[serde(default)]
-    pub subscription: Option<String>,
+    pub tz: i64,
+    /// La période que le navigateur connaît déjà.
+    #[serde(default)]
+    pub payment: Option<String>,
 }
 
 #[data]
 pub struct Status {
     pub secret: String,
     #[serde(default)]
-    pub subscription: Option<String>,
+    pub payment: Option<String>,
     /// De retour de Stripe Checkout : la session payée.
     #[serde(default)]
     pub session: Option<String>,
-    #[serde(default)]
-    pub return_to: String,
 }
 
-/// `GET /api/v1/plans` : les formules, au mois seulement.
+/// `GET /api/v1/plans` : les périodes, payées une fois.
 async fn plans(req: Request) -> Json<Value> {
     let enabled = req.state::<Billing>().ready().is_some();
     let plans: Vec<Value> = PLANS
@@ -560,13 +554,13 @@ async fn plans(req: Request) -> Json<Value> {
     Json(json!({
         "enabled": enabled,
         "currency": CURRENCY,
-        "interval": INTERVAL,
+        "mode": "payment",
         "plans": plans,
     }))
 }
 
 /// `POST /api/v1/billing/checkout` : ouvre le paiement Stripe d'une
-/// formule ; renvoie l'adresse où aller payer.
+/// période ; renvoie l'adresse où aller payer.
 async fn checkout(req: Request) -> (u16, Json<Value>) {
     let billing = req.state::<Billing>().clone();
     let Some(stripe) = billing.ready().cloned() else {
@@ -581,54 +575,44 @@ async fn checkout(req: Request) -> (u16, Json<Value>) {
     let Some(back) = return_url(&req, &body.return_to) else {
         return fail(400, "bad_return_url");
     };
-    let existing = match billing
-        .lookup(&body.secret, body.subscription.as_deref())
-        .await
-    {
-        Ok(existing) => existing,
+    match billing.lookup(&body.secret, body.payment.as_deref()).await {
+        Ok(Some(p)) if p.active(now_ms()) => return fail(409, "already_active"),
+        Ok(_) => {}
         Err(e) => {
             tracing::warn!("{e}");
             return fail(502, "stripe");
         }
-    };
-    if existing.as_ref().is_some_and(|s| s.active(now_ms())) {
-        return fail(409, "already_subscribed");
     }
     let locale = match body.lang.as_str() {
         "fr" | "en" | "es" => body.lang.clone(),
         _ => "auto".to_owned(),
     };
-    let product = format!("Alley — salons de {} jours", plan.days);
+    let tz = body.tz.clamp(-14 * 60, 14 * 60).to_string();
+    let product = format!("Alley — salons ouverts {} jours", plan.days);
     let mut form: Vec<(String, String)> = [
-        ("mode", "subscription".to_owned()),
+        // Un paiement unique : rien n'est jamais reprélevé.
+        ("mode", "payment".to_owned()),
         ("line_items[0][quantity]", "1".to_owned()),
         ("line_items[0][price_data][currency]", CURRENCY.to_owned()),
         (
             "line_items[0][price_data][unit_amount]",
             plan.cents.to_string(),
         ),
-        (
-            "line_items[0][price_data][recurring][interval]",
-            INTERVAL.to_owned(),
-        ),
-        (
-            "line_items[0][price_data][recurring][interval_count]",
-            "1".to_owned(),
-        ),
         ("line_items[0][price_data][product_data][name]", product),
         ("client_reference_id", id.clone()),
         ("metadata[alley_billing]", id.clone()),
         ("metadata[alley_plan]", plan.id.to_owned()),
-        ("subscription_data[metadata][alley_billing]", id.clone()),
+        ("payment_intent_data[metadata][alley_billing]", id.clone()),
         (
-            "subscription_data[metadata][alley_plan]",
+            "payment_intent_data[metadata][alley_plan]",
             plan.id.to_owned(),
         ),
+        ("payment_intent_data[metadata][alley_tz]", tz),
         // Stripe remplace `{CHECKOUT_SESSION_ID}` : le navigateur, de retour,
-        // retrouve ainsi son abonnement et le garde.
+        // retrouve ainsi sa période et la garde.
         (
             "success_url",
-            format!("{back}#abonnement={{CHECKOUT_SESSION_ID}}"),
+            format!("{back}#periode={{CHECKOUT_SESSION_ID}}"),
         ),
         ("cancel_url", back),
         ("locale", locale),
@@ -636,9 +620,7 @@ async fn checkout(req: Request) -> (u16, Json<Value>) {
     .into_iter()
     .map(|(k, v)| (k.to_owned(), v))
     .collect();
-    if let Some(customer) = existing.map(|s| s.customer).filter(|c| !c.is_empty()) {
-        form.push(("customer".into(), customer));
-    }
+    form.retain(|(_, v)| !v.is_empty());
     match stripe.ok("POST", "/v1/checkout/sessions", form).await {
         Ok(session) => match session["url"].as_str() {
             Some(url) => (200, Json(json!({ "url": url }))),
@@ -651,9 +633,9 @@ async fn checkout(req: Request) -> (u16, Json<Value>) {
     }
 }
 
-/// `POST /api/v1/billing/status` : l'abonnement d'un compte, d'après
-/// Stripe. De retour de Checkout (`session`), il est retrouvé par la session
-/// payée. La réponse porte l'identifiant de l'abonnement, que le navigateur
+/// `POST /api/v1/billing/status` : la période d'un compte, d'après Stripe.
+/// De retour de Checkout (`session`), elle est retrouvée par la session
+/// payée. La réponse porte l'identifiant du paiement, que le navigateur
 /// garde.
 async fn status(req: Request) -> (u16, Json<Value>) {
     let billing = req.state::<Billing>().clone();
@@ -664,15 +646,18 @@ async fn status(req: Request) -> (u16, Json<Value>) {
         return fail(400, "bad_request");
     };
     let Some(stripe) = billing.stripe.clone() else {
-        return (200, Json(json!({ "active": false, "days": 1 })));
+        return (200, Json(json!({ "active": false })));
     };
-    let mut subscription = body.subscription.clone();
+    let mut payment = body.payment.clone();
     if let Some(session) = body.session.as_deref().filter(|s| stripe_id(s, "cs_")) {
         let path = format!("/v1/checkout/sessions/{session}");
         match stripe.ok("GET", &path, Vec::new()).await {
             // Seulement une session payée par ce compte.
-            Ok(s) if s["metadata"]["alley_billing"].as_str() == Some(id.as_str()) => {
-                subscription = s["subscription"].as_str().map(str::to_owned);
+            Ok(s)
+                if s["metadata"]["alley_billing"].as_str() == Some(id.as_str())
+                    && s["payment_status"] == "paid" =>
+            {
+                payment = s["payment_intent"].as_str().map(str::to_owned);
                 billing.forget(&body.secret);
             }
             Ok(_) => {}
@@ -680,51 +665,9 @@ async fn status(req: Request) -> (u16, Json<Value>) {
         }
     }
     let now = now_ms();
-    match billing.lookup(&body.secret, subscription.as_deref()).await {
-        Ok(Some(e)) => (200, Json(e.to_json(now))),
-        Ok(None) => (200, Json(json!({ "active": false, "days": 1 }))),
-        Err(e) => {
-            tracing::warn!("{e}");
-            fail(502, "stripe")
-        }
-    }
-}
-
-/// `POST /api/v1/billing/portal` : le portail de Stripe, pour gérer son
-/// abonnement (résilier, changer de carte, factures).
-async fn portal(req: Request) -> (u16, Json<Value>) {
-    let billing = req.state::<Billing>().clone();
-    let Some(stripe) = billing.stripe.clone() else {
-        return fail(503, "billing_disabled");
-    };
-    let Ok(body) = req.json::<Status>().await else {
-        return fail(400, "bad_request");
-    };
-    let Some(back) = return_url(&req, &body.return_to) else {
-        return fail(400, "bad_return_url");
-    };
-    let customer = match billing
-        .lookup(&body.secret, body.subscription.as_deref())
-        .await
-    {
-        Ok(Some(e)) if !e.customer.is_empty() => e.customer,
-        Ok(_) => return fail(404, "no_subscription"),
-        Err(e) => {
-            tracing::warn!("{e}");
-            return fail(502, "stripe");
-        }
-    };
-    // Au retour du portail, ce qui a changé (résiliation) se voit aussitôt.
-    billing.forget(&body.secret);
-    let form = vec![
-        ("customer".to_owned(), customer),
-        ("return_url".to_owned(), back),
-    ];
-    match stripe.ok("POST", "/v1/billing_portal/sessions", form).await {
-        Ok(session) => match session["url"].as_str() {
-            Some(url) => (200, Json(json!({ "url": url }))),
-            None => fail(502, "stripe"),
-        },
+    match billing.lookup(&body.secret, payment.as_deref()).await {
+        Ok(Some(p)) => (200, Json(p.to_json(now))),
+        Ok(None) => (200, Json(json!({ "active": false }))),
         Err(e) => {
             tracing::warn!("{e}");
             fail(502, "stripe")
@@ -736,7 +679,6 @@ pub fn routes(app: &mut App) {
     app.get("/api/v1/plans", plans);
     app.post("/api/v1/billing/checkout", checkout);
     app.post("/api/v1/billing/status", status);
-    app.post("/api/v1/billing/portal", portal);
 }
 
 #[cfg(test)]
@@ -744,42 +686,54 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plans_are_monthly_only() {
-        assert_eq!(INTERVAL, "month");
+    fn periods_are_paid_once() {
         assert_eq!(plan("3d").map(|p| (p.days, p.cents)), Some((3, 499)));
         assert_eq!(plan("7d").map(|p| (p.days, p.cents)), Some((7, 999)));
-        assert_eq!(plan("1y"), None);
+        assert_eq!(plan("1m"), None);
     }
 
-    fn sub(billing: &str, interval: &str, status: &str) -> Value {
+    #[test]
+    fn a_period_ends_at_the_midnight_closing_its_last_day() {
+        // 2026-10-14 21:30 à Paris (UTC+2).
+        let start = 1_792_006_200_000;
+        let end = period_end(start, 120, 3);
+        // Mercredi, jeudi, vendredi : samedi 00:00 à Paris.
+        assert_eq!(end, 1_792_188_000_000);
+        assert_eq!(period_end(start, 120, 7) - end, 4 * DAY_MS);
+    }
+
+    fn pi(billing: &str, status: &str, amount: u64, refunded: bool) -> Value {
         json!({
-            "id": "sub_1", "customer": "cus_1", "status": status,
-            "metadata": { "alley_billing": billing, "alley_plan": "7d" },
-            "items": { "data": [{ "current_period_end": 2_000_000_000i64,
-                "price": { "recurring": { "interval": interval, "interval_count": 1 } } }] }
+            "id": "pi_1", "status": status, "created": 1_792_006_200i64,
+            "amount_received": amount, "currency": "eur",
+            "metadata": { "alley_billing": billing, "alley_plan": "3d", "alley_tz": "120" },
+            "latest_charge": { "refunded": refunded, "amount_refunded": if refunded { amount } else { 0 } }
         })
     }
 
     #[test]
-    fn stripe_says_what_a_subscription_is_worth() {
+    fn stripe_says_what_a_payment_is_worth() {
         let b = "b".repeat(64);
-        let e = entitlement(&sub(&b, "month", "active"), &b).unwrap();
-        assert_eq!((e.days(0), e.period_end), (7, 2_000_000_000_000));
+        let start = 1_792_006_200_000;
+        let p = pass(&pi(&b, "succeeded", 499, false), &b).unwrap();
+        assert_eq!((p.status.as_str(), p.start), ("paid", start));
+        assert!(p.active(start + DAY_MS));
+        assert!(!p.active(p.end), "la période finie");
         // Un autre compte : rien.
-        assert!(entitlement(&sub(&b, "month", "active"), &"c".repeat(64)).is_none());
-        // À l'année : aucun droit.
-        let yearly = entitlement(&sub(&b, "year", "active"), &b).unwrap();
-        assert_eq!((yearly.status.as_str(), yearly.days(0)), ("not_monthly", 1));
-        // En retard : jusqu'à la fin du mois payé.
-        let late = entitlement(&sub(&b, "month", "past_due"), &b).unwrap();
-        assert_eq!(late.days(0), 7);
-        assert_eq!(late.days(3_000_000_000_000), 1);
-        for status in ["canceled", "unpaid", "incomplete"] {
-            assert_eq!(
-                entitlement(&sub(&b, "month", status), &b).unwrap().days(0),
-                1
-            );
-        }
+        assert!(pass(&pi(&b, "succeeded", 499, false), &"c".repeat(64)).is_none());
+        // Remboursé, pas encore payé, ou pas le bon montant : aucun droit.
+        assert_eq!(
+            pass(&pi(&b, "succeeded", 499, true), &b).unwrap().status,
+            "refunded"
+        );
+        assert_eq!(
+            pass(&pi(&b, "processing", 0, false), &b).unwrap().status,
+            "pending"
+        );
+        assert_eq!(
+            pass(&pi(&b, "succeeded", 1, false), &b).unwrap().status,
+            "pending"
+        );
     }
 
     #[test]
@@ -794,10 +748,10 @@ mod tests {
 
     #[test]
     fn only_stripe_ids_reach_its_api() {
-        assert!(stripe_id("sub_1Abc", "sub_"));
+        assert!(stripe_id("pi_1Abc", "pi_"));
         assert!(stripe_id("cs_test_a1", "cs_"));
-        assert!(!stripe_id("sub_../../v1/customers", "sub_"));
-        assert!(!stripe_id("cus_1", "sub_"));
+        assert!(!stripe_id("pi_../../v1/customers", "pi_"));
+        assert!(!stripe_id("sub_1", "pi_"));
         assert_eq!(
             encode("metadata['alley_billing']:'ab'"),
             "metadata%5B%27alley_billing%27%5D%3A%27ab%27"
