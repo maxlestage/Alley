@@ -142,6 +142,7 @@ async fn rejoin(id: &str, retries: u32) {
         day: today(),
         leaving: false,
         retries,
+        admin: None,
     };
     let room: RoomRef = Rc::new(std::cell::RefCell::new(room));
     app(|a| {
@@ -242,6 +243,9 @@ async fn lost(room: &RoomRef, code: u16) {
     if code == 4404 {
         return leave_room(Some(t().room_gone_or_full));
     }
+    if code == 4410 {
+        return leave_room(Some(t().expelled));
+    }
     // Refusé dès l'ouverture : peut-être bloqué.
     if let Err(e) = request("GET", "/api/v1/stats", &[], None).await
         && e.banned()
@@ -317,6 +321,7 @@ fn on_event(room: &RoomRef, event: Value) {
             let alone = {
                 let mut r = room.borrow_mut();
                 r.me = event["you"].as_str().unwrap_or_default().to_owned();
+                r.admin = event["admin"].as_str().map(str::to_owned);
                 r.order = event["order"].as_u64().unwrap_or_default();
                 if let Some(t) = event["room"]["expires_at"].as_f64() {
                     r.expires_at = t;
@@ -460,8 +465,24 @@ fn on_event(room: &RoomRef, event: Value) {
                 true,
             );
         }
+        // L'administrateur a changé (le précédent est parti, ou le
+        // propriétaire est revenu).
+        "admin" => {
+            let became = {
+                let mut r = room.borrow_mut();
+                let was = r.i_am_admin();
+                r.admin = event["id"].as_str().map(str::to_owned);
+                !was && r.i_am_admin()
+            };
+            if became {
+                toast(t().now_admin, false);
+            }
+            ui::render_people();
+            ui::render_messages(false);
+        }
         "closed" => match event["reason"].as_str() {
             Some("banned") => show_banned(),
+            Some("expelled") => leave_room(Some(t().expelled)),
             _ => leave_room(Some(t().midnight_closed)),
         },
         _ => {}
@@ -606,11 +627,14 @@ fn on_relay(room: &RoomRef, event: &Value) {
             }
             ui::render_messages(false);
         }
+        // L'auteur, ou l'administrateur, supprime un message.
         "del" => {
             let mid = str_of("mid");
-            room.borrow_mut()
-                .msgs
-                .retain(|m| !(m.mid == mid && m.from == from));
+            let mut r = room.borrow_mut();
+            let by_admin = r.admin.as_deref() == Some(from);
+            r.msgs
+                .retain(|m| !(m.mid == mid && (m.from == from || by_admin)));
+            drop(r);
             ui::render_messages(false);
         }
         "typing" => {
@@ -752,8 +776,20 @@ pub fn edit_message(mid: &str, text: String) {
 pub fn delete_message(mid: &str) {
     let Some(room) = room() else { return };
     send(&room, None, payload("del", json!({ "mid": mid })));
-    room.borrow_mut().msgs.retain(|m| !(m.mid == mid && m.mine));
+    let admin = room.borrow().i_am_admin();
+    room.borrow_mut()
+        .msgs
+        .retain(|m| !(m.mid == mid && (m.mine || admin)));
     ui::render_messages(false);
+}
+
+/// L'administrateur exclut un membre du salon.
+pub fn expel(id: &str) {
+    if let Some(room) = room()
+        && room.borrow().i_am_admin()
+    {
+        send_raw(&room, &json!({ "type": "expel", "to": id }));
+    }
 }
 
 pub fn send_typing() {
