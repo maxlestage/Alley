@@ -51,15 +51,26 @@ pub async fn load_plans() {
         app(|a| a.plans = Some(plans));
     }
     if let Some(account) = app(|a| a.account.clone()) {
-        let body = json!({ "secret": account.billing });
+        // L'abonnement que l'appareil connaît, et, de retour de Stripe, la
+        // session payée : le serveur relit tout chez Stripe.
+        let (known, session) = app(|a| (a.sub_id.clone(), a.paid_session.clone()));
+        let body = json!({ "secret": account.billing, "subscription": known, "session": session });
         if let Ok(status) = request("POST", "/api/v1/billing/status", &[], Some(&body)).await {
             let active = status["active"] == true;
+            if let Some(id) = status["subscription"].as_str()
+                && known.as_deref() != Some(id)
+            {
+                save_subscription(&account, id);
+            }
             app(|a| a.subscription = Some(status));
-            // De retour du paiement : merci, ou patience (Stripe prévient le
-            // serveur dans les secondes qui suivent).
+            // De retour du paiement : merci, ou patience (Stripe confirme le
+            // paiement dans les secondes qui suivent).
             if app(|a| a.paid) {
                 if active {
-                    app(|a| a.paid = false);
+                    app(|a| {
+                        a.paid = false;
+                        a.paid_session = None;
+                    });
                     toast(t().subscription_thanks, false);
                 } else if !app(|a| std::mem::replace(&mut a.paid_waiting, true)) {
                     toast(t().subscription_pending, false);
@@ -79,6 +90,28 @@ pub async fn load_plans() {
     ui::render_plans();
 }
 
+const SUBSCRIPTION_KEY: &str = "alley.subscription.v1";
+
+/// L'abonnement retenu par l'appareil pour ce compte (signé : `vault`). Il
+/// n'est qu'un raccourci : Stripe fait foi, et le retrouve au besoin.
+pub async fn load_subscription(account: &Account) {
+    let mine = crypto::sha256_hex(&account.billing)[..16].to_owned();
+    let saved: Option<Value> = crate::vault::read(SUBSCRIPTION_KEY)
+        .await
+        .and_then(|raw| serde_json::from_str(&raw).ok());
+    let id = saved
+        .filter(|s| s["b"].as_str() == Some(mine.as_str()))
+        .and_then(|s| s["sub"].as_str().map(str::to_owned));
+    app(|a| a.sub_id = id);
+}
+
+fn save_subscription(account: &Account, id: &str) {
+    let mine = crypto::sha256_hex(&account.billing)[..16].to_owned();
+    app(|a| a.sub_id = Some(id.to_owned()));
+    let data = json!({ "b": mine, "sub": id }).to_string();
+    spawn(async move { crate::vault::write(SUBSCRIPTION_KEY, &data).await });
+}
+
 /// L'adresse où revenir après Stripe : l'application, dans sa langue.
 fn return_to() -> String {
     let origin = window().location().origin().unwrap_or_default();
@@ -95,6 +128,7 @@ pub async fn subscribe(plan: &str) {
         "plan": plan,
         "lang": i18n::lang().code(),
         "return_to": return_to(),
+        "subscription": app(|a| a.sub_id.clone()),
     });
     match request("POST", "/api/v1/billing/checkout", &[], Some(&body)).await {
         Ok(data) => {
@@ -113,7 +147,11 @@ pub async fn manage_subscription() {
     let Some(account) = app(|a| a.account.clone()) else {
         return;
     };
-    let body = json!({ "secret": account.billing, "return_to": return_to() });
+    let body = json!({
+        "secret": account.billing,
+        "subscription": app(|a| a.sub_id.clone()),
+        "return_to": return_to(),
+    });
     match request("POST", "/api/v1/billing/portal", &[], Some(&body)).await {
         Ok(data) => {
             if let Some(url) = data["url"].as_str() {
@@ -137,7 +175,14 @@ pub async fn load_known() {
         app(|a| a.known.clear());
         return ui::render_mine();
     }
-    let body = json!({ "ids": ids });
+    // Ce que le serveur a dit de ces salons, signé : s'il les a oubliés (il a
+    // redémarré), il les rouvre.
+    let signed: Vec<Value> = recent::list()
+        .into_iter()
+        .filter(|r| r.server == server && !r.sig.is_empty())
+        .map(|r| r.statement())
+        .collect();
+    let body = json!({ "ids": ids, "rooms": signed });
     if let Ok(data) = request("POST", "/api/v1/known", &[], Some(&body)).await {
         let rooms = data["rooms"].as_array().cloned().unwrap_or_default();
         recent::prune(&server, &rooms);
@@ -235,6 +280,7 @@ pub async fn create_room(name: &str, private: bool) {
     // Abonné : ses salons durent 3 ou 7 jours.
     if let Some(account) = app(|a| a.account.clone()) {
         body["billing"] = json!(account.billing);
+        body["subscription"] = json!(app(|a| a.sub_id.clone()));
     }
     match request("POST", "/api/v1/rooms", &[], Some(&body)).await {
         Ok(room) => {
@@ -264,7 +310,24 @@ async fn rejoin(id: &str, retries: u32) {
         return leave_room(Some(t().connection_lost));
     }
     leave_room(None);
-    let info = match request("GET", &format!("/api/v1/rooms/{id}"), &[], None).await {
+    let path = format!("/api/v1/rooms/{id}");
+    let mut found = request("GET", &path, &[], None).await;
+    // Oublié par le serveur (il a redémarré) : l'appareil en garde la
+    // description signée, qui le rouvre.
+    if found.as_ref().is_err_and(|e| e.status == 404)
+        && let Some(r) = recent::list()
+            .into_iter()
+            .find(|r| r.id == id && r.server == api_base() && !r.sig.is_empty())
+    {
+        let body = json!({ "ids": [id], "rooms": [r.statement()] });
+        if request("POST", "/api/v1/known", &[], Some(&body))
+            .await
+            .is_ok()
+        {
+            found = request("GET", &path, &[], None).await;
+        }
+    }
+    let info = match found {
         Ok(info) => info,
         Err(e) => {
             api_error(&e);
@@ -1177,9 +1240,14 @@ pub async fn start() {
     {
         app(|a| a.invited = Some(id.to_owned()));
     }
-    // De retour du paiement Stripe.
-    if hash == "#abonnement=merci" {
-        app(|a| a.paid = true);
+    // De retour du paiement Stripe : la session payée.
+    if let Some(session) = hash.strip_prefix("#abonnement=").filter(|s| {
+        s.starts_with("cs_") && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    }) {
+        app(|a| {
+            a.paid = true;
+            a.paid_session = Some(session.to_owned());
+        });
     }
     if !hash.is_empty() {
         let _ = window()

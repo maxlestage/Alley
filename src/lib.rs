@@ -101,9 +101,7 @@ pub fn shield() -> Shield {
     let mut cors = Cors::new()
         .allow_headers(["content-type"])
         .max_age(std::time::Duration::from_secs(3600));
-    // Le webhook de Stripe : signé (HMAC), il vient d'un serveur, pas d'un
-    // navigateur.
-    let mut csrf = Csrf::new().exempt(billing::WEBHOOK_PATH);
+    let mut csrf = Csrf::new();
     for origin in allowed_origins() {
         cors = cors.allow_origin(&origin);
         csrf = csrf.trusted_origin(&origin);
@@ -118,9 +116,7 @@ pub fn shield() -> Shield {
         .guard(HttpsRedirect::new())
         .guard(cors)
         .guard(csrf)
-        .guard(
-            BodyLimit::new(16 * 1024).route(billing::WEBHOOK_PATH, billing::WEBHOOK_LIMIT as u64),
-        )
+        .guard(BodyLimit::new(16 * 1024))
         .guard(RateLimit::new(Quota::per_second(30).burst(150)))
         .guard(SecurityHeaders::new().permissions_policy(PERMISSIONS_POLICY))
         .build()
@@ -174,15 +170,18 @@ pub fn app() -> App {
             next.run(req).await
         },
     );
-    // Les salons, en mémoire : aucun message n'est enregistré. Seuls les
-    // salons de plusieurs jours (abonnements), les abonnements et la clé qui
-    // signe les salons sont gardés en base (`DATABASE_URL`), et relus au
-    // démarrage.
+    // Les salons, en mémoire : aucun message n'est enregistré, et aucune base
+    // n'est nécessaire. Les salons de plusieurs jours (abonnements) rouvrent
+    // après un redémarrage sur présentation de leur description signée, que
+    // gardent les navigateurs ; la clé qui la signe vient de la configuration
+    // (`ALLEY_SIGNING_KEY`), ou de SQLite s'il y en a un.
     let rooms = Rooms::default();
+    if let Some(seed) = billing::env_signing_key() {
+        rooms.set_signing_key(seed);
+    }
     app.state(rooms.clone());
     let billing = billing::Billing::from_env();
     app.state(billing.clone());
-    app.model::<billing::Subscription>();
     app.model::<billing::KeptRoom>();
     app.model::<billing::Setting>();
     app.on_start(move |db| async move {
