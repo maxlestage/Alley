@@ -109,16 +109,30 @@ adresses IP qui se connectent.
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/maxlestage/Alley)
 
-Heroku construit l'image Docker du dépôt ([`heroku.yml`](heroku.yml),
-[`Dockerfile`](Dockerfile)) : le serveur, le navigateur en WebAssembly et les
-modèles de modération, téléchargés et vérifiés pendant la construction.
-Testé tel quel dans un conteneur limité à 512 Mo : environ 300 Mo en marche,
-modèles compris. Une dyno **Basic** suffit ; évitez Eco, qui s'endort et
-coupe les salons.
+Heroku compile Alley avec le buildpack Rust
+[`emk/rust`](https://github.com/emk/heroku-buildpack-rust) (pile
+`heroku-24`). Ce buildpack ne lance qu'un `cargo build --release` ;
+[`RustConfig`](RustConfig), qu'il lit d'abord, ajoute les deux étapes
+d'avant : le navigateur en WebAssembly (`cargo xtask web`) et les modèles
+de modération (`cargo xtask models`, vérifiés par empreinte, gardés dans le
+cache de Heroku). [`Procfile`](Procfile) lance le serveur. Le site, les
+icônes et le navigateur sont rangés dans le binaire.
+
+Vérifié avec le vrai script du buildpack dans l'image `heroku/heroku:24-build`,
+depuis un cache vide : la première construction prend une dizaine de minutes
+(sous la limite de 15 de Heroku, même sur 2 cœurs), les suivantes beaucoup
+moins grâce au cache. En marche, environ 300 Mo, modèles compris : une dyno
+**Basic** (512 Mo) suffit ; évitez Eco, qui s'endort et coupe les salons.
+
+**À la main** (une app existante) : *Settings → Buildpacks → Add buildpack* →
+`emk/rust`. Si l'app était réglée pour Docker (pile `container`), repassez-la
+d'abord sur `heroku-24` : `heroku stack:set heroku-24 -a <votre-app>`. Puis
+déployez la branche `master` (*Deploy → GitHub → Deploy Branch*, ou
+`git push heroku master`).
 
 **En un clic** : le bouton ci-dessus → choisissez un nom d'app et la région
-(Europe) → *Deploy app*. La première construction prend une dizaine de
-minutes. Puis, pour que la version GitHub Pages utilise ce serveur :
+(Europe) → *Deploy app*. [`app.json`](app.json) règle déjà le buildpack.
+Puis, pour que la version GitHub Pages utilise ce serveur :
 *Settings → Secrets and variables → Actions → Variables* du dépôt →
 `ALLEY_API_URL` = `https://<votre-app>.herokuapp.com`, et *Actions → Pages →
 Run workflow*.
@@ -132,9 +146,12 @@ variables → Actions*) :
    pas) ; facultatif : `HEROKU_REGION` (`eu` par défaut, ou `us`).
 
 Le workflow [`heroku.yml`](.github/workflows/heroku.yml) (`cargo xtask
-heroku`) crée l'app, construit l'image, autorise la version GitHub Pages
-(`ALLEY_ALLOWED_ORIGINS`), puis republie Pages avec l'adresse de l'API : rien
-d'autre à régler.
+heroku`) crée l'app, règle la pile et le buildpack, compile, autorise la
+version GitHub Pages (`ALLEY_ALLOWED_ORIGINS`), puis republie Pages avec
+l'adresse de l'API : rien d'autre à régler.
+
+L'image Docker ([`Dockerfile`](Dockerfile)) reste là pour les autres
+hébergeurs (Render, Fly.io, un serveur à vous).
 
 Sur Heroku, le serveur lit l'adresse des clients derrière le routeur
 (`X-Forwarded-For`, la dernière, que le routeur ajoute) : le blocage par IP
@@ -168,7 +185,7 @@ Le serveur a besoin d'environ 400 Mo de mémoire (les modèles de modération).
 | Workflow | Rôle |
 |---|---|
 | [`ci.yml`](.github/workflows/ci.yml) | formatage, clippy, tests, puis `cargo xtask merge` : fusion automatique dans `master` et déploiements |
-| [`heroku.yml`](.github/workflows/heroku.yml) | `cargo xtask heroku` : construit l'image Docker sur Heroku, règle `ALLEY_ALLOWED_ORIGINS`, puis republie Pages |
+| [`heroku.yml`](.github/workflows/heroku.yml) | `cargo xtask heroku` : compile sur Heroku (buildpack emk/rust), règle `ALLEY_ALLOWED_ORIGINS`, puis republie Pages |
 | [`pages.yml`](.github/workflows/pages.yml) | `cargo xtask api-url`, puis `alley export` sous `/<dépôt>`, publication sur GitHub Pages |
 
 Sans API configurée, l'app GitHub Pages demande l'adresse d'un serveur Alley
