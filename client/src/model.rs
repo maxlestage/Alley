@@ -1,8 +1,8 @@
-//! L'état de l'application — en mémoire seulement : **rien n'est enregistré**
-//! sur l'appareil. Fermer l'onglet, c'est tout oublier : pseudonyme, salon,
-//! messages, clés.
+//! L'état de l'application — en mémoire seulement. Fermer l'onglet, c'est
+//! tout oublier : pseudonyme, messages, clés. L'appareil ne retient que la
+//! liste des salons créés ou visités, jusqu'à leur minuit ([`crate::recent`]).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -10,13 +10,21 @@ use serde_json::{Value, json};
 use web_sys::WebSocket;
 
 use crate::call::CallRef;
-use crate::crypto::{self, Identity, Key};
+use crate::crypto::{self, Identity, Key, Rejected, Replay, Signer};
 
 /// Quelqu'un d'autre dans le salon.
 #[derive(Clone, Default)]
 pub struct Peer {
     /// Sa clé publique X25519 (base64), pour lui remettre la clé du salon.
     pub x: String,
+    /// Sa clé publique Ed25519 (base64) : tout ce qu'il envoie doit en être
+    /// signé.
+    pub s: Option<String>,
+    /// Les numéros de ses envois déjà reçus : un numéro déjà vu est un envoi
+    /// rejoué.
+    pub seen: Replay,
+    /// Un envoi de lui a déjà été écarté (on ne prévient qu'une fois).
+    pub warned: bool,
     /// Son rang d'arrivée : les trois plus anciens remettent la clé.
     pub order: u64,
     /// Son pseudonyme, qui arrive chiffré.
@@ -62,6 +70,10 @@ pub struct Room {
     pub order: u64,
     /// Une identité X25519 jetable, le temps du salon.
     pub identity: Identity,
+    /// La clé qui signe tout ce que j'envoie, jetable elle aussi.
+    pub signer: Signer,
+    /// Le numéro de mon prochain envoi.
+    pub sent: Cell<u64>,
     /// La clé du salon : tirée par le premier arrivant, remise aux suivants.
     pub key: Option<Key>,
     pub fingerprint: String,
@@ -81,14 +93,39 @@ pub struct Room {
 pub type RoomRef = Rc<RefCell<Room>>;
 
 impl Room {
-    pub fn enc(&self, payload: &Value) -> Option<String> {
-        self.key
-            .map(|k| crypto::seal_token(&k, &payload.to_string()))
+    /// Chiffre et signe un envoi (pour `to` seul, ou pour tout le salon).
+    pub fn enc(&self, to: Option<&str>, payload: &Value) -> Option<String> {
+        let key = self.key?;
+        let n = self.sent.get() + 1;
+        self.sent.set(n);
+        Some(crypto::seal_signed(
+            &key,
+            &self.signer,
+            &self.id,
+            to,
+            n,
+            &payload.to_string(),
+        ))
     }
 
-    pub fn dec(&self, token: &str) -> Option<Value> {
-        let key = self.key?;
-        serde_json::from_str(&crypto::open_token(&key, token)?).ok()
+    /// Ouvre un envoi de `from` : seulement s'il est signé de sa clé, pour
+    /// ce salon et pour moi, et jamais vu.
+    pub fn dec(&mut self, from: &str, token: &str) -> Result<Value, Rejected> {
+        let key = self.key.ok_or(Rejected::Unreadable)?;
+        let peer = self.peers.get(from).ok_or(Rejected::Unsigned)?;
+        let (body, n) = crypto::open_signed(
+            &key,
+            token,
+            peer.s.as_deref(),
+            &self.id,
+            &self.me,
+            &peer.seen,
+        )?;
+        let value = serde_json::from_str(&body).map_err(|_| Rejected::Forged)?;
+        if let Some(peer) = self.peers.get_mut(from) {
+            peer.seen.mark(n);
+        }
+        Ok(value)
     }
 
     pub fn set_key(&mut self, key: Key) {
@@ -172,9 +209,11 @@ pub struct App {
     pub account: Option<Account>,
     /// Les salons ouverts de ce compte.
     pub mine: Vec<Value>,
+    /// Les salons dont se souvient l'appareil, encore ouverts sur ce serveur.
+    pub known: Vec<Value>,
     /// Bloqué par la modération : plus rien n'est possible.
     pub banned: bool,
-    /// Une adresse de serveur saisie à la main (jamais enregistrée).
+    /// Une adresse de serveur saisie à la main (retenue par l'appareil).
     pub server: String,
     pub rooms: Vec<Value>,
     pub query: String,

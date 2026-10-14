@@ -2,14 +2,16 @@
 //! JavaScript écrite à la main.
 //!
 //! - [`crypto`] : le chiffrement de la messagerie Brocolis (AES-256-GCM,
-//!   X25519, HKDF-SHA256) — compilé aussi hors du navigateur, pour les tests
-//!   du serveur ;
+//!   X25519, HKDF-SHA256) et les signatures Ed25519 — compilé aussi hors du
+//!   navigateur, pour les tests du serveur ;
+//! - [`recent`] : les salons dont se souvient l'appareil ;
 //! - le reste n'existe que dans le navigateur : l'application (`app`, `ui`),
 //!   les appels WebRTC (`call`), la vitrine (`site`).
 
 pub mod crypto;
 pub mod highlight;
 pub mod i18n;
+pub mod recent;
 
 #[cfg(target_arch = "wasm32")]
 mod account;

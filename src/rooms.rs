@@ -1,8 +1,9 @@
 //! Les salons, en mémoire seulement — **rien n'est enregistré** :
 //!
-//! - un salon n'existe que tant que quelqu'un y est : le dernier qui part
-//!   l'emporte avec lui (un salon créé mais jamais rejoint disparaît au bout
-//!   d'une minute) ;
+//! - un salon vit jusqu'à son minuit, même vide : on peut y revenir après
+//!   l'avoir quitté (un salon créé mais jamais rejoint disparaît au bout
+//!   d'une minute ; quand la place manque, le salon vide depuis le plus
+//!   longtemps cède la sienne) ;
 //! - le serveur ne garde aucun message : il relaie chaque jeton chiffré aux
 //!   seules personnes présentes, puis l'oublie. Qui arrive ne voit rien de ce
 //!   qui s'est dit avant ;
@@ -45,6 +46,8 @@ pub const MAX_NAME: usize = 40;
 const UNJOINED_TTL: Duration = Duration::from_secs(60);
 /// Messages en attente pour une connexion lente, au plus.
 const BACKLOG: usize = 512;
+/// Salons demandés d'un coup à [`Rooms::known`], au plus.
+pub const MAX_KNOWN: usize = 50;
 /// Marques retenues par un salon, au plus.
 const MAX_TAGS: usize = 256;
 
@@ -109,6 +112,8 @@ pub fn clean_name(name: &str) -> Option<String> {
 struct Member {
     /// Sa clé publique X25519 (base64), pour qu'on lui remette la clé du salon.
     x: String,
+    /// Sa clé publique Ed25519 (base64) : tout ce qu'il envoie est signé.
+    s: Option<String>,
     tx: mpsc::Sender<String>,
     order: u64,
     /// Son adresse, pour fermer ses connexions s'il est bloqué.
@@ -126,6 +131,8 @@ struct Room {
     created: Instant,
     members: BTreeMap<String, Member>,
     next_order: u64,
+    /// Vide depuis : le premier à céder sa place quand elle manque.
+    empty_since: Option<Instant>,
     /// Les marques de ceux qui y sont venus connectés.
     tags: HashSet<String>,
     /// La marque du propriétaire (l'administrateur connecté avec un compte).
@@ -138,6 +145,12 @@ struct Room {
 }
 
 impl Room {
+    /// Garde-t-on ce salon ? Jusqu'à minuit, s'il a été rejoint au moins une
+    /// fois ; une minute sinon.
+    fn alive(&self, now: i64) -> bool {
+        self.expires_at > now && (self.next_order > 0 || self.created.elapsed() < UNJOINED_TTL)
+    }
+
     /// Désigne l'administrateur : le propriétaire s'il est là, sinon celui
     /// qui tient déjà le rôle, sinon le plus ancien présent (qui devient
     /// propriétaire si le salon n'en a pas). Renvoie `true` s'il a changé.
@@ -228,7 +241,12 @@ impl Rooms {
             return Some(room.info());
         }
         if rooms.len() >= MAX_ROOMS {
-            return None;
+            // La place manque : le salon vide depuis le plus longtemps la cède.
+            let oldest = rooms
+                .iter()
+                .filter_map(|(id, r)| r.empty_since.map(|t| (t, id.clone())))
+                .min()?;
+            rooms.remove(&oldest.1);
         }
         // Un salon privé n'est trouvable que par son lien : identifiant long.
         let id = random_id(if private { 16 } else { 6 });
@@ -241,6 +259,7 @@ impl Rooms {
             created: Instant::now(),
             members: BTreeMap::new(),
             next_order: 0,
+            empty_since: None,
             tags: HashSet::new(),
             owner_tag: None,
             admin: None,
@@ -274,6 +293,16 @@ impl Rooms {
         self.rooms.lock().unwrap().get(id).map(Room::info)
     }
 
+    /// Parmi ces identifiants (les salons dont se souvient un appareil), ceux
+    /// qui sont encore ouverts, dans le même ordre.
+    pub fn known(&self, ids: &[String]) -> Vec<Value> {
+        let rooms = self.rooms.lock().unwrap();
+        ids.iter()
+            .take(MAX_KNOWN)
+            .filter_map(|id| rooms.get(id).map(Room::info))
+            .collect()
+    }
+
     /// Les salons encore ouverts où est venue la personne de cette marque
     /// (privés compris).
     pub fn mine(&self, tag: &str) -> Vec<Value> {
@@ -289,6 +318,7 @@ impl Rooms {
         &self,
         id: &str,
         x: String,
+        s: Option<String>,
         ip: Option<IpAddr>,
         tag: Option<&str>,
     ) -> Result<Joined, JoinError> {
@@ -308,7 +338,7 @@ impl Rooms {
         let peers: Vec<Value> = room
             .members
             .iter()
-            .map(|(id, m)| json!({ "id": id, "x": m.x, "order": m.order }))
+            .map(|(id, m)| json!({ "id": id, "x": m.x, "s": m.s, "order": m.order }))
             .collect();
         let order = room.next_order;
         room.next_order += 1;
@@ -317,18 +347,21 @@ impl Rooms {
         {
             room.tags.insert(tag.clone());
         }
-        let joined = json!({ "type": "joined", "id": me, "x": x, "order": order }).to_string();
+        let joined =
+            json!({ "type": "joined", "id": me, "x": x, "s": s, "order": order }).to_string();
         room.broadcast(&me, &joined);
         room.members.insert(
             me.clone(),
             Member {
                 x,
+                s,
                 tx: tx.clone(),
                 order,
                 ip,
                 tag,
             },
         );
+        room.empty_since = None;
         let changed = room.elect();
         let welcome = json!({
             "type": "welcome",
@@ -348,7 +381,9 @@ impl Rooms {
         Ok(Joined { me, inbox })
     }
 
-    /// Une connexion se ferme ; le dernier qui part emporte le salon.
+    /// Une connexion se ferme. Le salon reste, même vide, jusqu'à minuit :
+    /// on peut y revenir (avec une nouvelle clé : l'ancienne est partie avec
+    /// le dernier présent).
     pub fn leave(&self, id: &str, me: &str) {
         let mut rooms = self.rooms.lock().unwrap();
         let Some(room) = rooms.get_mut(id) else {
@@ -358,7 +393,8 @@ impl Rooms {
             return;
         }
         if room.members.is_empty() {
-            rooms.remove(id);
+            room.admin = None;
+            room.empty_since = Some(Instant::now());
         } else {
             room.broadcast(me, &json!({ "type": "left", "id": me }).to_string());
             if room.elect() {
@@ -447,11 +483,15 @@ impl Rooms {
                 }
                 room.broadcast(&id, &json!({ "type": "left", "id": id }).to_string());
             }
-            if !room.members.is_empty() && room.elect() {
+            if room.members.is_empty() {
+                if room.empty_since.is_none() {
+                    room.admin = None;
+                    room.empty_since = Some(Instant::now());
+                }
+            } else if room.elect() {
                 room.announce_admin();
             }
         }
-        rooms.retain(|_, r| !r.members.is_empty() || r.created.elapsed() < UNJOINED_TTL);
     }
 
     /// Connexions ouvertes depuis une adresse, tous salons confondus.
@@ -473,7 +513,7 @@ impl Rooms {
     }
 
     /// Ferme les salons arrivés à minuit (tout le monde en est sorti) et ceux
-    /// que personne n'a rejoints.
+    /// que personne n'a jamais rejoints.
     pub fn sweep(&self) {
         let now = now_ms();
         let mut rooms = self.rooms.lock().unwrap();
@@ -483,7 +523,7 @@ impl Rooms {
                 room.broadcast("", &closed);
                 return false;
             }
-            !(room.members.is_empty() && room.created.elapsed() > UNJOINED_TTL)
+            room.alive(now)
         });
     }
 
@@ -530,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn a_room_lives_only_while_someone_is_in_it() {
+    fn a_room_lives_until_midnight_even_empty() {
         let rooms = Rooms::default();
         let room = rooms.create("Café", false, 120).unwrap();
         let id = room["id"].as_str().unwrap().to_owned();
@@ -539,12 +579,12 @@ mod tests {
         assert_eq!(rooms.list("CAFÉ").len(), 1);
         assert!(rooms.list("thé").is_empty());
 
-        let mut ada = rooms.join(&id, "xa".into(), None, None).unwrap();
+        let mut ada = rooms.join(&id, "xa".into(), None, None, None).unwrap();
         let welcome = next(&mut ada);
         assert_eq!(welcome["type"], "welcome");
         assert!(welcome["peers"].as_array().unwrap().is_empty());
 
-        let mut bob = rooms.join(&id, "xb".into(), None, None).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, None, None).unwrap();
         let welcome = next(&mut bob);
         assert_eq!(welcome["peers"][0]["id"], ada.me);
         assert_eq!(welcome["peers"][0]["x"], "xa");
@@ -565,7 +605,7 @@ mod tests {
         assert_eq!(next(&mut bob)["type"], "key");
 
         // Qui arrive ensuite ne voit rien de ce qui précède.
-        let mut eve = rooms.join(&id, "xe".into(), None, None).unwrap();
+        let mut eve = rooms.join(&id, "xe".into(), None, None, None).unwrap();
         assert_eq!(next(&mut eve)["type"], "welcome");
         assert!(eve.inbox.try_recv().is_err());
 
@@ -574,10 +614,65 @@ mod tests {
         assert_eq!(next(&mut ada)["type"], "joined");
         assert_eq!(next(&mut ada)["type"], "left");
         assert_eq!(rooms.count(), (1, 1));
-        // Le dernier qui part emporte le salon.
+        // Le dernier parti, le salon reste jusqu'à minuit : on y revient.
         rooms.leave(&id, &ada.me);
+        assert_eq!(rooms.count(), (1, 0));
+        rooms.sweep();
+        assert_eq!(rooms.known(&[id.clone(), "inconnu".into()]).len(), 1);
+        let mut back = rooms.join(&id, "x".into(), None, None, None).unwrap();
+        let welcome = next(&mut back);
+        assert!(welcome["peers"].as_array().unwrap().is_empty());
+        assert_eq!(welcome["admin"], back.me.as_str());
+        // À minuit, il disparaît.
+        rooms.expire_now(&id);
+        rooms.sweep();
         assert_eq!(rooms.count(), (0, 0));
-        assert!(rooms.join(&id, "x".into(), None, None).is_err());
+        assert!(rooms.known(std::slice::from_ref(&id)).is_empty());
+    }
+
+    #[test]
+    fn signing_keys_are_relayed_with_each_member() {
+        let rooms = Rooms::default();
+        let id = room_id(&rooms);
+        let mut ada = rooms
+            .join(&id, "xa".into(), Some("sa".into()), None, None)
+            .unwrap();
+        next(&mut ada);
+        let mut bob = rooms
+            .join(&id, "xb".into(), Some("sb".into()), None, None)
+            .unwrap();
+        assert_eq!(next(&mut bob)["peers"][0]["s"], "sa");
+        assert_eq!(next(&mut ada)["s"], "sb");
+    }
+
+    #[test]
+    fn an_empty_room_gives_its_place_when_the_server_is_full() {
+        let rooms = Rooms::default();
+        let first = room_id(&rooms);
+        let a = rooms.join(&first, "x".into(), None, None, None).unwrap();
+        rooms.leave(&first, &a.me);
+        // Jamais rejoint : un salon ne dure qu'une minute.
+        let unjoined = rooms.create("Personne", true, 0).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        rooms
+            .rooms
+            .lock()
+            .unwrap()
+            .get_mut(&unjoined)
+            .unwrap()
+            .created -= UNJOINED_TTL;
+        rooms.sweep();
+        assert!(rooms.info(&unjoined).is_none());
+        for i in 1..MAX_ROOMS {
+            rooms.create(&format!("Salon {i}"), true, 0).unwrap();
+        }
+        assert_eq!(rooms.count().0, MAX_ROOMS);
+        // Plein : le salon vide cède sa place ; ensuite, plus rien.
+        assert!(rooms.create("Encore un", true, 0).is_some());
+        assert!(rooms.info(&first).is_none());
+        assert!(rooms.create("De trop", true, 0).is_none());
     }
 
     #[test]
@@ -592,8 +687,10 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
-        let _a = rooms.join(&secret, "xa".into(), None, Some(&tag)).unwrap();
-        let _b = rooms.join(&public, "xb".into(), None, None).unwrap();
+        let _a = rooms
+            .join(&secret, "xa".into(), None, None, Some(&tag))
+            .unwrap();
+        let _b = rooms.join(&public, "xb".into(), None, None, None).unwrap();
         let mine = rooms.mine(&tag);
         assert_eq!(mine.len(), 1);
         assert_eq!(mine[0]["id"], secret.as_str());
@@ -632,16 +729,20 @@ mod tests {
         let rooms = Rooms::default();
         let id = room_id(&rooms);
         let ada_tag = "a".repeat(64);
-        let mut ada = rooms.join(&id, "xa".into(), None, Some(&ada_tag)).unwrap();
+        let mut ada = rooms
+            .join(&id, "xa".into(), None, None, Some(&ada_tag))
+            .unwrap();
         assert_eq!(admin_seen(&mut ada), Some(ada.me.clone()), "le créateur");
-        let mut bob = rooms.join(&id, "xb".into(), None, None).unwrap();
-        let mut eve = rooms.join(&id, "xe".into(), None, None).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, None, None).unwrap();
+        let mut eve = rooms.join(&id, "xe".into(), None, None, None).unwrap();
         assert_eq!(admin_seen(&mut bob), Some(ada.me.clone()));
         // Ada part : le plus ancien présent (Bob) tient le rôle.
         rooms.leave(&id, &ada.me);
         assert_eq!(admin_seen(&mut eve), Some(bob.me.clone()));
         // Ada revient avec son compte : elle redevient administratrice.
-        let mut ada2 = rooms.join(&id, "xa2".into(), None, Some(&ada_tag)).unwrap();
+        let mut ada2 = rooms
+            .join(&id, "xa2".into(), None, None, Some(&ada_tag))
+            .unwrap();
         assert_eq!(admin_seen(&mut ada2), Some(ada2.me.clone()));
         assert_eq!(admin_seen(&mut bob), Some(ada2.me.clone()));
     }
@@ -650,11 +751,11 @@ mod tests {
     fn an_owner_without_an_account_comes_back_as_a_member() {
         let rooms = Rooms::default();
         let id = room_id(&rooms);
-        let ada = rooms.join(&id, "xa".into(), None, None).unwrap();
-        let mut bob = rooms.join(&id, "xb".into(), None, None).unwrap();
+        let ada = rooms.join(&id, "xa".into(), None, None, None).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, None, None).unwrap();
         rooms.leave(&id, &ada.me);
         assert_eq!(admin_seen(&mut bob), Some(bob.me.clone()), "le plus ancien");
-        let mut ada2 = rooms.join(&id, "xa2".into(), None, None).unwrap();
+        let mut ada2 = rooms.join(&id, "xa2".into(), None, None, None).unwrap();
         assert_eq!(
             admin_seen(&mut ada2),
             Some(bob.me.clone()),
@@ -668,11 +769,13 @@ mod tests {
         let id = room_id(&rooms);
         let ip: IpAddr = "198.51.100.9".parse().unwrap();
         let ada = rooms
-            .join(&id, "xa".into(), None, Some(&"a".repeat(64)))
+            .join(&id, "xa".into(), None, None, Some(&"a".repeat(64)))
             .unwrap();
-        let mut bob = rooms.join(&id, "xb".into(), Some(ip), None).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, Some(ip), None).unwrap();
         let eve_tag = "e".repeat(64);
-        let eve = rooms.join(&id, "xe".into(), None, Some(&eve_tag)).unwrap();
+        let eve = rooms
+            .join(&id, "xe".into(), None, None, Some(&eve_tag))
+            .unwrap();
         // Seul l'administrateur exclut.
         assert!(!rooms.expel(&id, &bob.me, &eve.me));
         assert!(rooms.expel(&id, &ada.me, &bob.me));
@@ -682,12 +785,14 @@ mod tests {
         }
         assert_eq!(last["reason"], "expelled");
         assert_eq!(
-            rooms.join(&id, "xb2".into(), Some(ip), None).err(),
+            rooms.join(&id, "xb2".into(), None, Some(ip), None).err(),
             Some(JoinError::Barred)
         );
         assert!(rooms.expel(&id, &ada.me, &eve.me));
         assert_eq!(
-            rooms.join(&id, "xe2".into(), None, Some(&eve_tag)).err(),
+            rooms
+                .join(&id, "xe2".into(), None, None, Some(&eve_tag))
+                .err(),
             Some(JoinError::Barred)
         );
         assert_eq!(rooms.count(), (1, 1));
@@ -701,11 +806,12 @@ mod tests {
             .unwrap()
             .to_owned();
         let bad: IpAddr = "203.0.113.7".parse().unwrap();
-        let mut eve = rooms.join(&id, "xe".into(), Some(bad), None).unwrap();
+        let mut eve = rooms.join(&id, "xe".into(), None, Some(bad), None).unwrap();
         let mut ada = rooms
             .join(
                 &id,
                 "xa".into(),
+                None,
                 Some("198.51.100.1".parse().unwrap()),
                 None,
             )
@@ -736,7 +842,7 @@ mod tests {
             rooms.list("nuit").is_empty(),
             "un salon privé n'est pas listé"
         );
-        let mut ada = rooms.join(&id, "xa".into(), None, None).unwrap();
+        let mut ada = rooms.join(&id, "xa".into(), None, None, None).unwrap();
         next(&mut ada);
         rooms.expire_now(&id);
         rooms.sweep();
