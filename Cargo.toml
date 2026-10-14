@@ -33,8 +33,7 @@ aes-gcm = "0.10"
 # Le serveur signe ce qu'il dit d'un salon : l'appareil qui le retient
 # vérifie que personne ne l'a modifié.
 ed25519-dalek = "2"
-# Les abonnements : la signature des webhooks de Stripe, et ses appels.
-hmac = "0.12"
+# Les abonnements : les appels à l'API de Stripe.
 ureq = "3"
 tracing = "0.1"
 # La modération des images : les modèles ONNX, exécutés en Rust.

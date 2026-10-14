@@ -279,6 +279,27 @@ pub fn deploy_heroku() -> Result<(), String> {
             ),
         )?;
     }
+    // La clé qui signe les salons : tirée une fois, jamais changée (les
+    // salons de plusieurs jours rouvrent grâce à elle après un redémarrage,
+    // sans base de données).
+    let (_, vars) = heroku("GET", &format!("/apps/{app}/config-vars"), None)?;
+    if vars["ALLEY_SIGNING_KEY"]
+        .as_str()
+        .is_none_or(|k| k.len() != 64)
+    {
+        let mut seed = [0u8; 32];
+        use std::io::Read;
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut f| f.read_exact(&mut seed))
+            .map_err(|e| format!("aléa : {e}"))?;
+        let key: String = seed.iter().map(|b| format!("{b:02x}")).collect();
+        heroku(
+            "PATCH",
+            &format!("/apps/{app}/config-vars"),
+            Some(json!({ "ALLEY_SIGNING_KEY": key })),
+        )?;
+        println!("Clé de signature des salons tirée (ALLEY_SIGNING_KEY).");
+    }
     // Les sources, telles que dans le dépôt.
     let archive = std::env::temp_dir().join("alley-source.tgz");
     git(&[
