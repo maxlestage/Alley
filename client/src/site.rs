@@ -43,26 +43,33 @@ const LANG_KEY: &str = "alley.lang";
 
 /// La langue de la vitrine : celle de la page. À la première visite de la
 /// page française, un navigateur réglé en anglais ou en espagnol est envoyé
-/// vers sa langue ; un choix fait dans le sélecteur est retenu.
-fn choose_lang() -> Lang {
-    let page = document()
+/// vers sa langue ; un choix fait dans le sélecteur est retenu, signé
+/// ([`crate::vault`]) : un choix modifié hors d'Alley est ignoré.
+fn page_lang() -> Lang {
+    document()
         .document_element()
         .and_then(|e| e.get_attribute("lang"))
         .and_then(|l| Lang::parse(&l))
-        .unwrap_or(Lang::Fr);
-    let storage = window().local_storage().ok().flatten();
+        .unwrap_or(Lang::Fr)
+}
+
+async fn follow_saved_lang() {
     for link in query_all("[data-lang]") {
-        let storage = storage.clone();
         let code = link.get_attribute("data-lang").unwrap_or_default();
-        listen_forever(&link, "click", move |_| {
-            if let Some(s) = &storage {
-                let _ = s.set_item(LANG_KEY, &code);
-            }
+        let href = link.get_attribute("href").unwrap_or_default();
+        listen_forever(&link, "click", move |e| {
+            // Le choix est signé avant de quitter la page.
+            e.prevent_default();
+            let (code, href) = (code.clone(), href.clone());
+            spawn(async move {
+                crate::vault::write(LANG_KEY, &code).await;
+                let _ = window().location().set_href(&href);
+            });
         });
     }
-    let saved = storage
-        .as_ref()
-        .and_then(|s| s.get_item(LANG_KEY).ok().flatten())
+    let page = page_lang();
+    let saved = crate::vault::read(LANG_KEY)
+        .await
         .and_then(|l| Lang::parse(&l));
     let browser = window()
         .navigator()
@@ -75,12 +82,12 @@ fn choose_lang() -> Lang {
             .location()
             .replace(&format!("{base}{}/", wanted.prefix()));
     }
-    page
 }
 
 pub fn start() {
     crate::app::retire_worker();
-    i18n::set_lang(choose_lang());
+    i18n::set_lang(page_lang());
+    spawn(follow_saved_lang());
     let os = detect_os();
     if let Some(os) = os
         && let Some(card) = query(&format!(".platform[data-os=\"{os}\"]"))

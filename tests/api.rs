@@ -241,6 +241,23 @@ async fn a_room_hands_its_key_over_relays_and_forgets() {
     .await;
     assert_eq!(known["rooms"].as_array().unwrap().len(), 1);
     assert_eq!(known["rooms"][0]["id"], id.as_str());
+    // Ce que le serveur dit du salon est signé : l'appareil qui le retient
+    // le vérifie avec la clé publique du serveur, comme le navigateur.
+    let key: Value = http("GET", "/api/v1/key", None).await;
+    let key = key["key"].as_str().unwrap();
+    let info = &known["rooms"][0];
+    let signed = |name: &str| {
+        crypto::room_signed_by(
+            key,
+            info["id"].as_str().unwrap(),
+            name,
+            info["private"].as_bool().unwrap(),
+            info["expires_at"].as_i64().unwrap(),
+            info["sig"].as_str().unwrap(),
+        )
+    };
+    assert!(signed("Café"));
+    assert!(!signed("Café modifié"));
     let stats: Value = http("GET", "/api/v1/stats", None).await;
     assert_eq!(
         (

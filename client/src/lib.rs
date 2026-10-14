@@ -4,7 +4,8 @@
 //! - [`crypto`] : le chiffrement de la messagerie Brocolis (AES-256-GCM,
 //!   X25519, HKDF-SHA256) et les signatures Ed25519 — compilé aussi hors du
 //!   navigateur, pour les tests du serveur ;
-//! - [`recent`] : les salons dont se souvient l'appareil ;
+//! - [`recent`] : les salons dont se souvient l'appareil, gardés signés
+//!   (`vault`) ;
 //! - le reste n'existe que dans le navigateur : l'application (`app`, `ui`),
 //!   les appels WebRTC (`call`), la vitrine (`site`).
 
@@ -29,6 +30,8 @@ mod net;
 mod site;
 #[cfg(target_arch = "wasm32")]
 mod ui;
+#[cfg(target_arch = "wasm32")]
+mod vault;
 
 /// Le point d'entrée : la page dit si elle est la vitrine ou l'application
 /// (`<meta name="alley-page">`).
