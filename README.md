@@ -18,6 +18,26 @@ voir [Déploiement](#déploiement).
   affiche (« Vos salons ») ; un geste pour y revenir, « Oublier » ou « Tout
   oublier » pour les effacer. Le serveur saisi sur GitHub Pages est retenu
   aussi.
+- 🔏 **Ce que garde l'appareil est signé** ([`client/src/vault.rs`](client/src/vault.rs)) :
+  n'importe qui peut modifier le `localStorage` d'un navigateur (outils de
+  développement, extension, programme sur l'ordinateur). Chaque donnée gardée
+  (salons retenus, serveur, langue) est donc signée par plusieurs points
+  indépendants, dont aucune clé n'est dans le `localStorage` :
+  - **l'appareil** : une clé HMAC-SHA256 tirée par WebCrypto, **non
+    exportable**, rangée dans IndexedDB : la page s'en sert, personne ne peut
+    la lire ni la copier ;
+  - **le compte**, si l'on est connecté : une clé tirée du mot de passe,
+    jamais enregistrée ; ce qui a été écrit connecté est revérifié à chaque
+    connexion ;
+  - **le serveur**, pour chaque salon retenu : il signe (Ed25519, clé tirée à
+    son démarrage, `GET /api/v1/key`) l'identifiant, le nom, le type et la
+    fin de chaque salon qu'il décrit.
+
+  Une donnée dont une signature ne correspond pas est écartée et effacée, et
+  un avertissement s'affiche. Même un script qui se servirait de la clé de
+  l'appareil ne peut ni renommer un salon (signature du serveur) ni réécrire
+  ce qu'a écrit un compte (signature du compte). Sans IndexedDB, rien n'est
+  gardé : mieux vaut ne rien retenir que retenir sans pouvoir vérifier.
 - ✍️ **Tout est signé** ([`client/src/crypto.rs`](client/src/crypto.rs)) :
   chaque membre tire, en entrant, une clé Ed25519 propre au salon et
   l'annonce avec sa clé X25519. Tout ce qu'il envoie (messages,
