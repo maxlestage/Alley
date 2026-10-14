@@ -198,6 +198,8 @@ impl Room {
 #[derive(Clone)]
 pub struct Account {
     pub tag: String,
+    /// Le secret d'abonnement ([`crate::crypto::billing_secret`]).
+    pub billing: String,
 }
 
 /// Toute l'application.
@@ -211,6 +213,14 @@ pub struct App {
     pub mine: Vec<Value>,
     /// Les salons dont se souvient l'appareil, encore ouverts sur ce serveur.
     pub known: Vec<Value>,
+    /// Les formules d'abonnement du serveur (`GET /api/v1/plans`).
+    pub plans: Option<Value>,
+    /// L'abonnement du compte connecté (`POST /api/v1/billing/status`).
+    pub subscription: Option<Value>,
+    /// De retour du paiement Stripe (`#abonnement=merci`), et l'attente de
+    /// sa confirmation déjà annoncée.
+    pub paid: bool,
+    pub paid_waiting: bool,
     /// La clé publique de chaque serveur, qui vérifie ce qu'il dit des salons.
     pub server_keys: std::collections::HashMap<String, String>,
     /// Bloqué par la modération : plus rien n'est possible.
