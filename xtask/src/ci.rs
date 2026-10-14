@@ -218,7 +218,7 @@ pub fn deploy_heroku() -> Result<(), String> {
         );
         return Ok(());
     };
-    let region = env("HEROKU_REGION").unwrap_or_else(|| "us".into());
+    let region = env("HEROKU_REGION").unwrap_or_else(|| "eu".into());
     let (status, info) = heroku("GET", &format!("/apps/{app}"), None)?;
     let info = match status {
         200 => info,
