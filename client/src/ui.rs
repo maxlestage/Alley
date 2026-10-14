@@ -614,6 +614,8 @@ pub fn render_people() {
     others.sort_by_key(|p| p.1.to_lowercase());
     people.extend(others);
     let me = r.me.clone();
+    let admin = r.admin.clone().unwrap_or_default();
+    let i_am_admin = r.i_am_admin();
     let fp = r.fingerprint.clone();
     drop(r);
     scope("members", || {
@@ -637,8 +639,27 @@ pub fn render_people() {
                                 h("span.name")
                                     .text(name)
                                     .child((*id == me).then(|| h("small").text(t.you)))
+                                    .child((*id == admin).then(|| {
+                                        h("small.crown")
+                                            .attr("title", t.admin)
+                                            .attr("aria-label", t.admin)
+                                            .text(" 👑")
+                                    }))
                                     .child(voice.then(|| h("small").text(" 🔊"))),
                             )
+                            .child((i_am_admin && *id != me).then(|| {
+                                let (id, name) = (id.clone(), name.clone());
+                                h("button.expel")
+                                    .attr("type", "button")
+                                    .attr("title", t.expel)
+                                    .text(t.expel)
+                                    .on("click", move |_| {
+                                        if confirm(&fill(crate::i18n::t().confirm_expel, &[&name]))
+                                        {
+                                            expel(&id);
+                                        }
+                                    })
+                            }))
                     }))
                     .into(),
                 h("div.fp")
@@ -657,7 +678,7 @@ pub fn render_messages(stick: bool) {
     };
     let at_bottom = box_.scroll_height() - box_.scroll_top() - box_.client_height() < 80;
     let r = room.borrow();
-    let (name, has_key) = (r.name.clone(), r.key.is_some());
+    let (name, has_key, admin) = (r.name.clone(), r.key.is_some(), r.i_am_admin());
     let msgs = r.msgs.clone();
     drop(r);
     let t = t();
@@ -676,7 +697,7 @@ pub fn render_messages(stick: bool) {
         for m in &msgs {
             let grouped = prev
                 .is_some_and(|p| p.from == m.from && m.t - p.t < 300_000.0 && m.reply.is_empty());
-            nodes.push(message_node(m, &msgs, grouped).into());
+            nodes.push(message_node(m, &msgs, grouped, admin).into());
             prev = Some(m);
         }
         replace(&box_, nodes);
@@ -686,7 +707,7 @@ pub fn render_messages(stick: bool) {
     }
 }
 
-fn message_node(m: &Msg, all: &[Msg], grouped: bool) -> El {
+fn message_node(m: &Msg, all: &[Msg], grouped: bool, admin: bool) -> El {
     let t = t();
     let content: El = match m.kind.as_str() {
         "image" => {
@@ -742,7 +763,8 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool) -> El {
                 async move { copy(&text, crate::i18n::t().copied).await }
             })
         }))
-        .child(m.mine.then(|| {
+        // Ses propres messages, ou tous si l'on administre le salon.
+        .child((m.mine || admin).then(|| {
             icon_btn(t.delete, "🗑")
                 .class("danger")
                 .on("click", move |_| {

@@ -18,6 +18,12 @@ voir [Déploiement](#déploiement).
   quitte jamais l'appareil : WebCrypto en tire une graine (PBKDF2-SHA256,
   310 000 tours, salée par le pseudonyme), dont on tire une **marque** ; le
   serveur ne voit que cette marque, que chaque salon retient tant qu'il vit.
+- 👑 **Un administrateur par salon** : son créateur. Connecté avec un compte,
+  il le reste — de retour avec le même pseudonyme et mot de passe, il retrouve
+  son rôle ; sans compte, il redevient simple membre en partant. Tant qu'il
+  est absent, le plus ancien présent tient le rôle. L'administrateur exclut
+  un membre (qui ne peut plus revenir tant que le salon existe) et supprime
+  n'importe quel message.
 - 🌍 **Français, anglais, espagnol** : la vitrine (`/`, `/en/`, `/es/`),
   l'application (`/app/`, `/en/app/`, `/es/app/`), les messages d'erreur, tout
   est traduit ; on change de langue sans quitter son salon.

@@ -73,6 +73,8 @@ pub struct Room {
     /// Le jour local d'arrivée : à minuit, tout s'efface.
     pub day: (u32, u32, u32),
     pub leaving: bool,
+    /// La connexion qui administre le salon (désignée par le serveur).
+    pub admin: Option<String>,
     pub retries: u32,
 }
 
@@ -141,6 +143,11 @@ impl Room {
                 .map(|(id, _)| id.clone()),
         );
         ids
+    }
+
+    /// Suis-je l'administrateur du salon ?
+    pub fn i_am_admin(&self) -> bool {
+        self.admin.as_deref() == Some(self.me.as_str()) && !self.me.is_empty()
     }
 
     pub fn present(&self) -> usize {
