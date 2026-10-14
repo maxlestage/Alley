@@ -303,7 +303,7 @@ impl Moderation {
     pub async fn judge(&self, jpeg: Vec<u8>) -> Verdict {
         if self.images.get().is_none() {
             // Le chargement est en cours : quelques secondes au démarrage.
-            for _ in 0..40 {
+            for _ in 0..120 {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 if self.images.get().is_some() {
                     break;
