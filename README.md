@@ -161,41 +161,49 @@ Aucun message n'est gardé pour autant : on revient dans le salon, pas dans son
 historique. À minuit chez soi, l'écran d'un salon de plusieurs jours se vide,
 mais on y reste.
 
+**Sans base de données** — tout tient dans le `localStorage` (signé, voir
+plus haut), Stripe, et SQLite si l'on veut :
+
+- **Stripe fait foi** pour les abonnements. Au retour du paiement, le
+  navigateur retrouve son abonnement par la session payée et le garde
+  (`alley.subscription.v1`, signé) ; il le présente, et le serveur le relit
+  chez Stripe (2 minutes en cache, en mémoire) en vérifiant qu'il appartient à
+  ce compte. Sur un autre appareil, la recherche de Stripe le retrouve. Aucun
+  webhook à régler.
+- **Les salons de plusieurs jours** survivent aux redémarrages du serveur
+  grâce aux navigateurs : chacun garde la description du salon signée par le
+  serveur (identifiant, nom, type, fin) et la lui présente s'il l'a oublié ;
+  il la vérifie avec sa propre clé et rouvre le salon. Une description
+  modifiée, ou signée par une autre clé, ne rouvre rien. Il suffit que la clé
+  du serveur ne change pas : `ALLEY_SIGNING_KEY`.
+- **SQLite**, facultatif (`DATABASE_URL=sqlite://alley.db`) : sur un
+  hébergeur dont le disque dure, il garde aussi la clé et les salons de
+  plusieurs jours, qui rouvrent alors d'eux-mêmes. Rien n'en dépend : le
+  disque de Heroku s'efface à chaque redémarrage, et ça marche quand même.
 - **Qui paie** : un compte (pseudonyme + mot de passe). Le navigateur tire du
   mot de passe un *secret d'abonnement*, envoyé dans le corps des requêtes ;
-  le serveur n'en garde que l'empreinte, qui relie l'abonnement Stripe au
-  compte. Il ne connaît ni le pseudonyme ni le mot de passe ; l'e-mail et la
-  carte restent chez Stripe (Checkout, puis le portail client pour résilier).
-- **Ce que garde la base** (`DATABASE_URL`) : les abonnements (formule,
-  statut, fin de période, identifiant client Stripe), les salons de plusieurs
-  jours (identifiant, nom, type, fin) pour qu'ils survivent aux redémarrages,
-  et la clé qui signe les salons. Rien d'autre.
-- **Les webhooks** de Stripe sont vérifiés (signature HMAC, 5 minutes au
-  plus), puis l'abonnement est relu chez Stripe : c'est Stripe qui fait foi.
+  Stripe n'en reçoit que l'empreinte. Le serveur ne connaît ni le pseudonyme
+  ni le mot de passe ; l'e-mail et la carte restent chez Stripe (Checkout,
+  puis le portail client pour résilier).
 
 API : `GET /api/v1/plans`, `POST /api/v1/billing/checkout` (`{secret, plan,
-return_to}`), `POST /api/v1/billing/status`, `POST /api/v1/billing/portal`,
-`POST /api/v1/billing/webhook`.
+return_to, subscription}`), `POST /api/v1/billing/status` (`{secret,
+subscription, session}`), `POST /api/v1/billing/portal`.
 
 ### Mettre en place les abonnements
 
-1. **Une base Postgres** (Heroku redémarre chaque serveur une fois par jour :
-   sans base, abonnements et salons longs seraient perdus) :
-   `heroku addons:create heroku-postgresql:essential-0 -a <votre-app>`.
-   Le bouton « Deploy to Heroku » l'ajoute déjà. Heroku règle `DATABASE_URL`.
-2. **Stripe → Développeurs → Clés API** : la clé secrète dans la variable
-   `STRIPE_SECRET_KEY` de l'app Heroku (*Settings → Config Vars*).
-3. **Stripe → Développeurs → Webhooks → Ajouter un endpoint** :
-   `https://<votre-app>.herokuapp.com/api/v1/billing/webhook`, événements
-   `checkout.session.completed`, `customer.subscription.created`,
-   `customer.subscription.updated`, `customer.subscription.deleted`. Son
-   secret (`whsec_…`) dans `STRIPE_WEBHOOK_SECRET`.
-4. **Stripe → Paramètres → Portail client** : l'activer (résiliation,
+1. **`ALLEY_SIGNING_KEY`** : le bouton « Deploy to Heroku » et le
+   déploiement automatique la tirent eux-mêmes. À la main :
+   `heroku config:set ALLEY_SIGNING_KEY=$(openssl rand -hex 32) -a <votre-app>`,
+   une fois, puis ne plus y toucher.
+2. **Stripe → Développeurs → Clés API** : la clé secrète dans
+   `STRIPE_SECRET_KEY` (*Settings → Config Vars* de l'app Heroku).
+3. **Stripe → Paramètres → Portail client** : l'activer (résiliation,
    moyens de paiement, factures), une fois.
 
-Sans `STRIPE_SECRET_KEY` et `STRIPE_WEBHOOK_SECRET`, l'offre n'apparaît pas.
-Essayez d'abord avec les clés de test (`sk_test_…`) et la carte
-`4242 4242 4242 4242`.
+C'est tout : ni base, ni webhook. Sans `STRIPE_SECRET_KEY` (ou sans clé de
+signature durable), l'offre n'apparaît pas. Essayez d'abord avec une clé de
+test (`sk_test_…`) et la carte `4242 4242 4242 4242`.
 
 ## Mettre Alley sur Heroku
 

@@ -221,6 +221,9 @@ pub struct App {
     /// sa confirmation déjà annoncée.
     pub paid: bool,
     pub paid_waiting: bool,
+    pub paid_session: Option<String>,
+    /// L'abonnement Stripe du compte, gardé par l'appareil.
+    pub sub_id: Option<String>,
     /// La clé publique de chaque serveur, qui vérifie ce qu'il dit des salons.
     pub server_keys: std::collections::HashMap<String, String>,
     /// Bloqué par la modération : plus rien n'est possible.

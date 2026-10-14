@@ -6,7 +6,7 @@
 //! | `POST /rooms` | crée un salon (`{name, private, tz}`) ou rejoint celui de ce nom |
 //! | `GET /rooms/:id` | un salon (pour un lien de salon privé) |
 //! | `POST /mine` | les salons ouverts d'une marque (`{tag}`, compte connecté) |
-//! | `POST /known` | parmi des salons (`{ids}`, ceux dont se souvient l'appareil), les ouverts |
+//! | `POST /known` | parmi des salons (`{ids, rooms}`, ceux dont se souvient l'appareil), les ouverts ; rouvre ceux qu'il a oubliés, sur présentation de leur description signée |
 //! | `GET /rooms/:id/live?x=&s=&t=` | le salon en direct (WebSocket) |
 //! | `GET /key` | la clé publique Ed25519 qui vérifie ce que le serveur dit des salons |
 //! | `GET /ice` | les serveurs STUN/TURN des appels |
@@ -55,10 +55,12 @@ pub struct NewRoom {
     /// le salon disparaît à minuit chez lui.
     #[serde(default)]
     pub tz: i64,
-    /// Le secret d'abonnement du compte ([`crate::billing`]) : ses salons
-    /// durent 3 ou 7 jours.
+    /// Le secret d'abonnement du compte ([`crate::billing`]) et l'abonnement
+    /// que connaît le navigateur : ses salons durent 3 ou 7 jours.
     #[serde(default)]
     pub billing: Option<String>,
+    #[serde(default)]
+    pub subscription: Option<String>,
 }
 
 /// Jetons relayés par connexion, au plus, par fenêtre de 10 s (contre
@@ -80,6 +82,21 @@ async fn list(req: Request) -> Json<Value> {
 #[data]
 pub struct Known {
     pub ids: Vec<String>,
+    /// Ce que le serveur a dit de ces salons, signé : s'il les a oubliés
+    /// (redémarrage), il les rouvre ([`Rooms::revive`]).
+    #[serde(default)]
+    pub rooms: Vec<Signed>,
+}
+
+/// Ce que le serveur a dit d'un salon, avec sa signature.
+#[data]
+pub struct Signed {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub private: bool,
+    pub expires_at: i64,
+    pub sig: String,
 }
 
 #[data]
@@ -105,7 +122,10 @@ async fn create(req: Request) -> (u16, Json<Value>) {
             Json(json!({ "error": "forbidden_name", "reason": category.code() })),
         );
     }
-    let days = crate::billing::days_for(req.db(), body.billing.as_deref()).await;
+    let days = req
+        .state::<crate::billing::Billing>()
+        .days_for(body.billing.as_deref(), body.subscription.as_deref())
+        .await;
     match rooms.create(&body.name, body.private, body.tz, days) {
         Some(room) => {
             // Un salon de plusieurs jours survit aux redémarrages.
@@ -136,9 +156,18 @@ async fn mine(req: Request) -> (u16, Json<Value>) {
 /// ceux qui sont encore ouverts.
 async fn known(req: Request) -> (u16, Json<Value>) {
     match req.json::<Known>().await {
-        Ok(body) if body.ids.len() <= rooms::MAX_KNOWN => {
+        Ok(body) if body.ids.len() <= rooms::MAX_KNOWN && body.rooms.len() <= rooms::MAX_KNOWN => {
             let rooms = req.state::<Rooms>();
             rooms.sweep();
+            for r in &body.rooms {
+                let kept = rooms::Kept {
+                    id: r.id.clone(),
+                    name: r.name.clone(),
+                    private: r.private,
+                    expires_at: r.expires_at,
+                };
+                rooms.revive(&kept, &r.sig);
+            }
             (200, Json(json!({ "rooms": rooms.known(&body.ids) })))
         }
         _ => fail(400, "bad_request"),
