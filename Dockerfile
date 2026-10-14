@@ -15,8 +15,10 @@ RUN cargo xtask web \
     && cargo build --release --bin alley && cp target/release/alley /alley
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* && useradd --system --uid 10001 alley
+# Les certificats racine (HTTPS sortant) viennent de l'étape de construction :
+# pas d'apt-get, l'image se construit plus vite et sans dépendre des miroirs.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+RUN useradd --system --uid 10001 alley
 COPY --from=build /alley /usr/local/bin/alley
 COPY --from=build /src/models /usr/local/share/alley/models
 USER alley
