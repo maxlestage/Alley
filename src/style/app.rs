@@ -617,6 +617,181 @@ pub fn app() -> String {
         ],
     );
     s.rule("pre code", &[("background", "none"), ("padding", "0")]);
+    // ---- Le code partagé : blocs colorés ---------------------------------
+    s.rule(
+        ":root",
+        &[
+            ("--tk-kw", "#c678dd"),
+            ("--tk-ty", "#e5c07b"),
+            ("--tk-lit", "#d19a66"),
+            ("--tk-str", "#98c379"),
+            ("--tk-num", "#d19a66"),
+            ("--tk-com", "#7f848e"),
+            ("--tk-fn", "#61afef"),
+            ("--tk-mac", "#56b6c2"),
+            ("--tk-attr", "#d7ba7d"),
+            ("--tk-var", "#e06c75"),
+            ("--tk-op", "#56b6c2"),
+            ("--tk-tag", "#e06c75"),
+            ("--tk-key", "#e06c75"),
+            ("--tk-add", "#98c379"),
+            ("--tk-del", "#e06c75"),
+            ("--tk-meta", "#61afef"),
+            ("--code-fg", "#abb2bf"),
+            ("--code-bg", "#1e1b2b"),
+            ("--code-head", "#25213a"),
+        ],
+    );
+    s.media("(prefers-color-scheme: light)", |s| {
+        s.rule(
+            ":root",
+            &[
+                ("--tk-kw", "#cf222e"),
+                ("--tk-ty", "#953800"),
+                ("--tk-lit", "#0550ae"),
+                ("--tk-str", "#0a3069"),
+                ("--tk-num", "#0550ae"),
+                ("--tk-com", "#6e7781"),
+                ("--tk-fn", "#8250df"),
+                ("--tk-mac", "#0550ae"),
+                ("--tk-attr", "#6639ba"),
+                ("--tk-var", "#953800"),
+                ("--tk-op", "#cf222e"),
+                ("--tk-tag", "#116329"),
+                ("--tk-key", "#0550ae"),
+                ("--tk-add", "#116329"),
+                ("--tk-del", "#82071e"),
+                ("--tk-meta", "#8250df"),
+                ("--code-fg", "#1f2328"),
+                ("--code-bg", "#f6f8fa"),
+                ("--code-head", "#eef1f4"),
+            ],
+        );
+    });
+    s.rule(
+        ".codeblock",
+        &[
+            ("margin", "6px 0"),
+            ("border", "1px solid var(--line)"),
+            ("border-radius", "10px"),
+            ("overflow", "hidden"),
+            ("background", "var(--code-bg)"),
+            ("max-width", "min(780px, 100%)"),
+        ],
+    );
+    s.rule(
+        ".code-head",
+        &[
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("gap", "10px"),
+            ("padding", "5px 6px 5px 12px"),
+            ("background", "var(--code-head)"),
+            ("border-bottom", "1px solid var(--line)"),
+            ("font-size", "12px"),
+            ("color", "var(--muted)"),
+        ],
+    );
+    s.rule(
+        ".code-lang",
+        &[
+            ("font-weight", "700"),
+            ("color", "var(--fg)"),
+            ("letter-spacing", "0.02em"),
+        ],
+    );
+    s.rule(".code-head .spacer", &[("flex", "1")]);
+    s.rule(
+        ".code-copy",
+        &[
+            ("padding", "4px 10px"),
+            ("border-radius", "6px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "transparent"),
+            ("color", "var(--muted)"),
+            ("font-size", "12px"),
+            ("font-weight", "600"),
+        ],
+    );
+    s.rule(
+        ".code-copy:hover",
+        &[("color", "var(--fg)"), ("border-color", "var(--accent)")],
+    );
+    s.rule(
+        "pre.code",
+        &[
+            ("margin", "0"),
+            ("padding", "10px 0"),
+            ("border", "0"),
+            ("border-radius", "0"),
+            ("background", "transparent"),
+            ("color", "var(--code-fg)"),
+            ("counter-reset", "line"),
+            ("max-height", "520px"),
+            ("overflow", "auto"),
+            ("tab-size", "4"),
+            ("font-size", "13.5px"),
+        ],
+    );
+    s.rule(
+        "pre.code .line",
+        &[
+            ("display", "block"),
+            ("min-height", "1.55em"),
+            ("line-height", "1.55"),
+            ("padding-right", "16px"),
+        ],
+    );
+    s.rule(
+        "pre.code .line::before",
+        &[
+            ("counter-increment", "line"),
+            ("content", "counter(line)"),
+            ("display", "inline-block"),
+            ("min-width", "3ch"),
+            ("margin-right", "14px"),
+            ("padding-left", "10px"),
+            ("text-align", "right"),
+            ("color", "var(--tk-com)"),
+            ("opacity", "0.7"),
+            ("user-select", "none"),
+            ("-webkit-user-select", "none"),
+        ],
+    );
+    s.rule(".tk-kw", &[("color", "var(--tk-kw)")]);
+    s.rule(".tk-ty", &[("color", "var(--tk-ty)")]);
+    s.rule(".tk-lit", &[("color", "var(--tk-lit)")]);
+    s.rule(".tk-str", &[("color", "var(--tk-str)")]);
+    s.rule(".tk-num", &[("color", "var(--tk-num)")]);
+    s.rule(".tk-com", &[("color", "var(--tk-com)")]);
+    s.rule(".tk-fn", &[("color", "var(--tk-fn)")]);
+    s.rule(".tk-mac", &[("color", "var(--tk-mac)")]);
+    s.rule(".tk-attr", &[("color", "var(--tk-attr)")]);
+    s.rule(".tk-var", &[("color", "var(--tk-var)")]);
+    s.rule(".tk-op", &[("color", "var(--tk-op)")]);
+    s.rule(".tk-tag", &[("color", "var(--tk-tag)")]);
+    s.rule(".tk-key", &[("color", "var(--tk-key)")]);
+    s.rule(".tk-add", &[("color", "var(--tk-add)")]);
+    s.rule(".tk-del", &[("color", "var(--tk-del)")]);
+    s.rule(".tk-meta", &[("color", "var(--tk-meta)")]);
+    s.rule(".tk-com", &[("font-style", "italic")]);
+    s.rule(
+        ".text pre code",
+        &[
+            ("background", "none"),
+            ("padding", "0"),
+            ("font-size", "inherit"),
+        ],
+    );
+    s.rule(".tk-kw, .tk-tag", &[("font-weight", "600")]);
+    s.rule(
+        ".code-btn",
+        &[
+            ("font-family", "var(--mono)"),
+            ("font-size", "13px"),
+            ("font-weight", "700"),
+        ],
+    );
     s.rule(
         "blockquote",
         &[
