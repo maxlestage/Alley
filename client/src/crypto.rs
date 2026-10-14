@@ -322,6 +322,16 @@ pub fn account_vault_key(seed: &[u8]) -> Key {
     out
 }
 
+/// Le secret d'abonnement d'un compte, tiré de sa graine (le mot de passe) :
+/// il relie un abonnement payant au compte. Le serveur n'en garde que
+/// l'empreinte ; il n'apprend ni le pseudonyme ni le mot de passe.
+pub fn billing_secret(seed: &[u8]) -> String {
+    let hk = Hkdf::<Sha256>::new(Some(b"alley-account"), seed);
+    let mut out = [0u8; 32];
+    hk.expand(b"billing", &mut out).expect("32 octets");
+    hex(&out)
+}
+
 /// HMAC-SHA256.
 pub fn mac(key: &Key, data: &[u8]) -> [u8; 32] {
     use hmac::Mac;
