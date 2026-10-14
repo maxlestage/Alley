@@ -1,8 +1,12 @@
-//! Les tâches de compilation d'Alley, écrites en Rust.
+//! Les tâches d'Alley, écrites en Rust.
 //!
 //! ```sh
 //! rustup target add wasm32-unknown-unknown
-//! cargo xtask web      # client/ → client/pkg/ (WebAssembly)
+//! cargo xtask web       # client/ → client/pkg/ (WebAssembly)
+//! cargo xtask models    # les modèles de modération → models/
+//! cargo run --manifest-path xtask/Cargo.toml --features prompts -- prompts <vocabulaire> <textual.onnx>
+//!                       # recalcule src/moderation/prompts.bin (rarement)
+//! cargo xtask merge | heroku | pages-enabled | api-url   # GitHub Actions
 //! ```
 //!
 //! `web` compile la crate `alley-web` pour `wasm32-unknown-unknown`, puis
@@ -10,14 +14,37 @@
 //! de parler au navigateur. Cette colle démarre le module d'elle-même : la
 //! page n'a qu'à la charger, sans une ligne de JavaScript écrite à la main.
 
+mod ci;
+mod models;
+#[cfg(feature = "prompts")]
+mod prompts;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
+const USAGE: &str =
+    "usage : cargo xtask web | models | prompts <vocabulaire.txt.gz> <textual.onnx>";
+
 fn main() -> ExitCode {
-    let task = std::env::args().nth(1).unwrap_or_default();
-    let result = match task.as_str() {
-        "web" => web(),
-        _ => Err("usage : cargo xtask web".to_owned()),
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let result = match args.first().map(String::as_str) {
+        Some("web") => web(),
+        Some("models") => models::download(&root().join("models")),
+        #[cfg(feature = "prompts")]
+        Some("prompts") if args.len() == 3 => prompts::compute(
+            Path::new(&args[1]),
+            Path::new(&args[2]),
+            &root().join("src/moderation/prompts.bin"),
+        ),
+        #[cfg(not(feature = "prompts"))]
+        Some("prompts") => Err(
+            "cargo run --manifest-path xtask/Cargo.toml --features prompts -- prompts <vocabulaire> <textual.onnx>".into(),
+        ),
+        Some("merge") => ci::merge(),
+        Some("heroku") => ci::deploy_heroku(),
+        Some("pages-enabled") => ci::pages_enabled(),
+        Some("api-url") => ci::api_url(),
+        _ => Err(USAGE.to_owned()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

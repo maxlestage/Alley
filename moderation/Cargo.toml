@@ -1,0 +1,9 @@
+[package]
+name = "alley-moderation"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Le filtre de texte d'Alley (contenu sexuel, drogues), partagé par le serveur et le navigateur"
+publish = false
+
+[dependencies]

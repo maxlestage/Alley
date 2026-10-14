@@ -15,6 +15,7 @@ use web_sys::{
 use crate::app::{self, *};
 use crate::call::{self, Call};
 use crate::dom::*;
+use crate::i18n::{self, LANGS, Lang, fill, t};
 use crate::model::*;
 use crate::net::needs_server;
 
@@ -24,7 +25,11 @@ use crate::net::needs_server;
 pub fn render() {
     let Some(root) = by_id("root") else { return };
     root.set_class_name("");
-    let (name, in_room) = app(|a| (a.name.clone(), a.room.is_some()));
+    let (name, in_room, banned) = app(|a| (a.name.clone(), a.room.is_some(), a.banned));
+    if banned {
+        scope("root", || replace(&root, vec![banned_screen().into()]));
+        return;
+    }
     if name.is_empty() {
         scope("root", || replace(&root, vec![welcome().into()]));
         return;
@@ -43,27 +48,92 @@ fn until(t: f64) -> String {
 }
 
 fn people_label(n: u64) -> String {
-    if n <= 1 {
-        format!("{n} présent")
-    } else {
-        format!("{n} présents")
-    }
+    let t = t();
+    fill(
+        if n <= 1 {
+            t.present_one
+        } else {
+            t.present_many
+        },
+        &[&n.to_string()],
+    )
 }
 
+/// Le choix de la langue : tout est redessiné, rien n'est perdu.
+fn lang_picker() -> El {
+    let select = h("select.lang")
+        .attr("aria-label", t().language)
+        .children(LANGS.iter().map(|l| {
+            h("option")
+                .attr("value", l.code())
+                .prop("selected", *l == i18n::lang())
+                .text(l.name())
+        }))
+        .el();
+    let s2 = select.clone();
+    listen(&select, "change", move |_| {
+        if let Some(lang) = Lang::parse(&input_value(&s2)) {
+            switch_lang(lang);
+        }
+    });
+    El(select)
+}
+
+/// Le pseudonyme est-il acceptable ?
+fn check_pseudonym(name: &str) -> Result<String, &'static str> {
+    let name: String = name.trim().chars().take(32).collect();
+    if name.is_empty() {
+        return Err(t().need_pseudonym);
+    }
+    if alley_moderation::check_text(&name).is_some() {
+        return Err(t().pseudonym_forbidden);
+    }
+    Ok(name)
+}
+
+/// L'adresse d'un serveur saisie sur GitHub Pages (sans API configurée).
+fn take_server(input: &Element) -> bool {
+    if !needs_server() {
+        return true;
+    }
+    let s = input_value(input).trim().trim_end_matches('/').to_owned();
+    let valid = s.starts_with("https://") && s.len() > 8 && !s[8..].contains('/');
+    if !valid {
+        toast(t().server_invalid, true);
+        return false;
+    }
+    app(|a| a.server = s);
+    true
+}
+
+/// L'accueil : se connecter (pseudonyme + mot de passe, que le navigateur
+/// propose d'enregistrer), ou entrer sans compte.
 fn welcome() -> El {
+    let t = t();
     let (server, invited) = app(|a| (a.server.clone(), a.invited.is_some()));
-    let name_in = h("input")
-        .attr("placeholder", "Votre pseudonyme")
+    let name_in = h("input#username")
+        .attr("name", "username")
         .attr("maxlength", "32")
-        .attr("autocomplete", "nickname")
+        .attr("autocomplete", "username")
+        .attr("autocapitalize", "none")
+        .attr("spellcheck", "false")
+        .attr("required", "")
+        .el();
+    let pass_in = h("input#password")
+        .attr("name", "password")
+        .attr("type", "password")
+        .attr("minlength", "8")
+        .attr("autocomplete", "current-password")
+        .attr("required", "")
         .el();
     let server_in = h("input")
-        .attr("placeholder", "https://mon-alley.herokuapp.com")
+        .attr("placeholder", "https://alley.example.com")
         .attr("type", "url")
         .el();
     set_input_value(&server_in, &server);
     let need = needs_server();
-    let (n2, s2) = (name_in.clone(), server_in.clone());
+    let (n2, p2, s2) = (name_in.clone(), pass_in.clone(), server_in.clone());
+    let (n3, s3) = (name_in.clone(), server_in.clone());
     let focus_on = name_in.clone();
     spawn(async move {
         sleep(50).await;
@@ -71,41 +141,111 @@ fn welcome() -> El {
             focus(&focus_on);
         }
     });
+    let submit = h("button.primary#login")
+        .attr("type", "submit")
+        .text(if invited { t.login_invited } else { t.login });
+    let submit_el = submit.0.clone();
     h("div.welcome").child(
         h("form.welcome-card")
-            .child(h("img").attr("src", base_url("/assets/icon-192.png")).attr("alt", "").attr("width", "72").attr("height", "72"))
-            .child(h("h1").text(if invited { "On vous attend dans un salon" } else { "Alley" }))
-            .child(h("p.muted").text(
-                "Un pseudonyme, et c'est tout. Rien n'est enregistré : les salons vivent tant que quelqu'un y est et disparaissent à minuit.",
-            ))
-            .child(field("Votre pseudonyme", &name_in, Some("Chiffré : seuls les présents du salon le voient.")))
+            .attr("method", "post")
+            .attr("action", "#")
+            .child(
+                h("div.card-top")
+                    .child(h("span.spacer"))
+                    .child(lang_picker()),
+            )
+            .child(
+                h("img")
+                    .attr("src", base_url("/assets/icon-192.png"))
+                    .attr("alt", "")
+                    .attr("width", "72")
+                    .attr("height", "72"),
+            )
+            .child(h("h1").text(if invited { t.invited_title } else { "Alley" }))
+            .child(h("p.muted").text(t.intro))
+            .child(field(t.pseudonym, &name_in, Some(t.pseudonym_hint)))
+            .child(field(t.password, &pass_in, Some(t.password_hint)))
             .child(need.then(|| {
                 h("div.notice")
-                    .child(h("strong").text("Le serveur d'Alley n'est pas encore en ligne."))
-                    .child(h("p.small").text(
-                        "Cette page est publiée sur GitHub Pages ; le serveur qui relaie les salons n'y est pas encore relié. Si quelqu'un vous a donné l'adresse d'un serveur Alley, indiquez-la :",
-                    ))
+                    .child(h("strong").text(t.server_title))
+                    .child(h("p.small").text(t.server_body))
                     .child(server_in.clone())
             }))
-            .child(h("button.primary").attr("type", "submit").text(if invited { "Entrer dans le salon" } else { "Entrer" }))
-            .child(h("p.small.muted").text("🔒 Chiffré de bout en bout · protocole Brocolis · serveur Paquets · 100 % Rust"))
+            .child(submit)
+            .child(
+                h("button.link-button#guest")
+                    .attr("type", "button")
+                    .text(t.guest)
+                    .on("click", move |_| {
+                        let name = match check_pseudonym(&input_value(&n3)) {
+                            Ok(name) => name,
+                            Err(e) => {
+                                toast(e, true);
+                                return focus(&n3);
+                            }
+                        };
+                        if !take_server(&s3) {
+                            return;
+                        }
+                        app(|a| {
+                            a.name = name;
+                            a.account = None;
+                        });
+                        spawn(app::enter());
+                    }),
+            )
+            .child(h("p.small.muted").text(t.guest_hint))
+            .child(h("p.small.muted").text(t.footer))
             .on("submit", move |e| {
                 e.prevent_default();
-                let n: String = input_value(&n2).trim().chars().take(32).collect();
-                if n.is_empty() {
-                    return focus(&n2);
-                }
-                if needs_server() {
-                    let s = input_value(&s2).trim().trim_end_matches('/').to_owned();
-                    let valid = s.starts_with("https://") && s.len() > 8 && !s[8..].contains('/');
-                    if !valid {
-                        return toast("Il faut l'adresse https:// d'un serveur Alley.", true);
+                let t = crate::i18n::t();
+                let name = match check_pseudonym(&input_value(&n2)) {
+                    Ok(name) => name,
+                    Err(e) => {
+                        toast(e, true);
+                        return focus(&n2);
                     }
-                    app(|a| a.server = s);
+                };
+                let password = input_value(&p2);
+                if password.chars().count() < 8 {
+                    toast(t.password_too_short, true);
+                    return focus(&p2);
                 }
-                app(|a| a.name = n);
-                spawn(app::enter());
+                if !take_server(&s2) {
+                    return;
+                }
+                let button = submit_el.clone();
+                let _ = button.set_attribute("disabled", "");
+                button.set_text_content(Some(t.logging_in));
+                spawn(async move {
+                    match crate::account::tag(&name, &password).await {
+                        Ok(tag) => {
+                            crate::account::offer_to_save(&name, &password);
+                            app(|a| {
+                                a.name = name;
+                                a.account = Some(Account { tag });
+                            });
+                            app::enter().await;
+                        }
+                        Err(_) => {
+                            let _ = button.remove_attribute("disabled");
+                            button.set_text_content(Some(crate::i18n::t().login));
+                            toast(crate::i18n::t().insecure_body, true);
+                        }
+                    }
+                });
             }),
+    )
+}
+
+/// L'adresse est bloquée : rien d'autre à faire.
+fn banned_screen() -> El {
+    let t = t();
+    h("div.welcome").child(
+        h("div.welcome-card.banned")
+            .child(h("div.big-icon").text("⛔"))
+            .child(h("h1").text(t.banned_title))
+            .child(h("p").text(t.banned_body)),
     )
 }
 
@@ -114,14 +254,22 @@ thread_local! {
 }
 
 fn lobby() -> El {
-    let (name, query, private) = app(|a| (a.name.clone(), a.query.clone(), a.private));
+    let t = t();
+    let (name, query, private, signed_in) = app(|a| {
+        (
+            a.name.clone(),
+            a.query.clone(),
+            a.private,
+            a.account.is_some(),
+        )
+    });
     let q = h("input#q")
         .attr("type", "search")
-        .attr("placeholder", "Chercher un salon…")
+        .attr("placeholder", t.search)
         .attr("maxlength", "40")
         .attr("autocomplete", "off")
         .attr("enterkeyhint", "go")
-        .attr("aria-label", "Nom du salon")
+        .attr("aria-label", t.room_name)
         .el();
     set_input_value(&q, &query);
     let q2 = q.clone();
@@ -155,32 +303,54 @@ fn lobby() -> El {
                 .child(
                     h("a.brand")
                         .attr("href", base_url("/"))
-                        .child(h("img").attr("src", base_url("/assets/favicon.svg")).attr("alt", "").attr("width", "28").attr("height", "28"))
+                        .child(
+                            h("img")
+                                .attr("src", base_url("/assets/favicon.svg"))
+                                .attr("alt", "")
+                                .attr("width", "28")
+                                .attr("height", "28"),
+                        )
                         .child(h("strong").text("Alley")),
                 )
                 .child(h("span.spacer"))
+                .child(lang_picker())
                 .child(
                     h("button.me-chip")
                         .attr("type", "button")
-                        .attr("title", "Changer de pseudonyme")
+                        .attr(
+                            "title",
+                            if signed_in {
+                                t.logout
+                            } else {
+                                t.change_pseudonym
+                            },
+                        )
                         .child(avatar("moi", &name, "tiny"))
                         .child(h("span").text(&name))
+                        .child(signed_in.then(|| h("small.key-badge").text("🔑")))
                         .on("click", |_| {
-                            app(|a| a.name.clear());
+                            app(|a| {
+                                a.name.clear();
+                                a.account = None;
+                                a.mine.clear();
+                            });
                             render();
                         }),
                 ),
         )
         .child(
             h("main.lobby-main")
-                .child(h("h1").text("Salons ouverts"))
-                .child(h("p.muted").text(
-                    "Rien n'est enregistré. Un salon vit tant que quelqu'un y est, ne montre rien de ce qui s'est dit avant votre arrivée, et disparaît à minuit.",
-                ))
+                .child(signed_in.then(|| {
+                    h("section.mine")
+                        .child(h("h2").text(t.my_rooms))
+                        .child(h("div#mine.rooms").attr("aria-live", "polite"))
+                }))
+                .child(h("h1").text(t.lobby_title))
+                .child(h("p.muted").text(t.lobby_intro))
                 .child(
                     h("form.search")
                         .child(q)
-                        .child(h("button.primary").attr("type", "submit").text("Entrer"))
+                        .child(h("button.primary").attr("type", "submit").text(t.enter))
                         .on("submit", move |e| {
                             e.prevent_default();
                             let name = input_value(&q3).trim().to_owned();
@@ -191,7 +361,11 @@ fn lobby() -> El {
                             spawn(async move { create_room(&name, private).await });
                         }),
                 )
-                .child(h("label.check.small").child(private_box).child(h("span").text("Salon privé : invisible dans la liste, seulement par lien")))
+                .child(
+                    h("label.check.small")
+                        .child(private_box)
+                        .child(h("span").text(t.private_room)),
+                )
                 .child(h("div#rooms.rooms").attr("aria-live", "polite")),
         )
 }
@@ -200,7 +374,43 @@ fn simple(s: &str) -> String {
     s.trim().to_lowercase()
 }
 
+/// Un salon de la liste.
+fn room_card(r: &serde_json::Value) -> Child {
+    let id = r["id"].as_str().unwrap_or_default().to_owned();
+    let n = r["members"].as_u64().unwrap_or_default();
+    let expires = r["expires_at"].as_f64().unwrap_or_default();
+    let private = r["private"].as_bool().unwrap_or_default();
+    h("button.room-card")
+        .attr("type", "button")
+        .child(h("span.room-name").text(format!(
+            "{} {}",
+            if private { "🔒" } else { "#" },
+            r["name"].as_str().unwrap_or_default()
+        )))
+        .child(h("span.room-meta").text(fill(t().room_meta, &[&people_label(n), &until(expires)])))
+        .click(move || {
+            let id = id.clone();
+            async move { join_room(&id).await }
+        })
+        .into()
+}
+
+/// Les salons du compte connecté.
+pub fn render_mine() {
+    let Some(list) = by_id("mine") else { return };
+    let rooms = app(|a| a.mine.clone());
+    scope("mine", || {
+        let items: Vec<Child> = if rooms.is_empty() {
+            vec![h("p.empty").text(t().my_rooms_empty).into()]
+        } else {
+            rooms.iter().map(room_card).collect()
+        };
+        replace(&list, items);
+    });
+}
+
 pub fn render_rooms() {
+    render_mine();
     let Some(list) = by_id("rooms") else { return };
     let (rooms, query) = app(|a| (a.rooms.clone(), a.query.trim().to_owned()));
     scope("rooms", || {
@@ -213,8 +423,8 @@ pub fn render_rooms() {
             items.push(
                 h("button.room-card.create")
                     .attr("type", "button")
-                    .child(h("span.room-name").text(format!("＋ Créer « {query} »")))
-                    .child(h("span.room-meta").text("Un nouveau salon, jusqu'à minuit"))
+                    .child(h("span.room-name").text(fill(t().create_room, &[&query])))
+                    .child(h("span.room-meta").text(t().create_room_meta))
                     .click(move || {
                         let (name, private) = (name.clone(), app(|a| a.private));
                         async move { create_room(&name, private).await }
@@ -222,36 +432,14 @@ pub fn render_rooms() {
                     .into(),
             );
         }
-        for r in &rooms {
-            let id = r["id"].as_str().unwrap_or_default().to_owned();
-            let n = r["members"].as_u64().unwrap_or_default();
-            let expires = r["expires_at"].as_f64().unwrap_or_default();
-            items.push(
-                h("button.room-card")
-                    .attr("type", "button")
-                    .child(
-                        h("span.room-name")
-                            .text(format!("# {}", r["name"].as_str().unwrap_or_default())),
-                    )
-                    .child(h("span.room-meta").text(format!(
-                        "{} · disparaît à {}",
-                        people_label(n),
-                        until(expires)
-                    )))
-                    .click(move || {
-                        let id = id.clone();
-                        async move { join_room(&id).await }
-                    })
-                    .into(),
-            );
-        }
+        items.extend(rooms.iter().map(room_card));
         if items.is_empty() {
             items.push(
                 h("p.empty")
                     .text(if query.is_empty() {
-                        "Aucun salon ouvert pour l'instant. Tapez un nom pour créer le premier !"
+                        t().no_rooms
                     } else {
-                        "Aucun salon de ce nom."
+                        t().no_room_named
                     })
                     .into(),
             );
@@ -299,9 +487,10 @@ pub fn render_room() {
         )
     };
     let show = app(|a| a.show_members);
+    let t = t();
     scope("root", || {
         let head = h("header.chat-head")
-            .child(icon_btn("Quitter le salon", "←").on("click", |_| leave_room(None)))
+            .child(icon_btn(t.leave_room, "←").on("click", |_| leave_room(None)))
             .child(h("span.hash").text(if private { "🔒" } else { "#" }))
             .child(h("strong.title").text(&name))
             .child(h("span.topic#room-meta"))
@@ -311,18 +500,18 @@ pub fn render_room() {
                     .attr(
                         "title",
                         if has_key {
-                            format!("Chiffré de bout en bout · empreinte {fp}")
+                            fill(t.encrypted_fp, &[&fp])
                         } else {
-                            "Clé du salon en route…".into()
+                            t.key_on_its_way.into()
                         },
                     )
                     .text("🔒"),
             )
-            .child(icon_btn("Inviter", "🔗").click(|| async { invite().await }))
+            .child(icon_btn(t.invite, "🔗").click(|| async { invite().await }))
             .child(
                 h("button.icon-btn#call-btn")
                     .attr("type", "button")
-                    .attr("title", "Appel")
+                    .attr("title", t.call)
                     .text("📞")
                     .on("click", |_| {
                         if app(|a| a.call.is_some()) {
@@ -332,7 +521,7 @@ pub fn render_room() {
                         }
                     }),
             )
-            .child(icon_btn("Présents", "👥").on("click", |_| toggle_members(None)));
+            .child(icon_btn(t.members, "👥").on("click", |_| toggle_members(None)));
         let layout = h("div.layout.room-layout")
             .class_if("members-open", show)
             .child(
@@ -347,7 +536,7 @@ pub fn render_room() {
                     .child(h("div.typing#typing").attr("aria-live", "polite"))
                     .child(composer()),
             )
-            .child(h("aside.members#members").attr("aria-label", "Présents"))
+            .child(h("aside.members#members").attr("aria-label", t.members))
             .child(h("div.scrim").on("click", |_| toggle_members(Some(false))));
         replace(&root, vec![layout.into()]);
     });
@@ -357,6 +546,17 @@ pub fn render_room() {
     render_typing();
 }
 
+/// La clé du salon vient d'arriver : le cadenas, les présents, les messages.
+pub fn key_arrived() {
+    let Some(room) = room() else { return };
+    let fp = room.borrow().fingerprint.clone();
+    if let Some(lock) = query(".chat-head .lock") {
+        let _ = lock.set_attribute("title", &fill(t().encrypted_fp, &[&fp]));
+    }
+    render_people();
+    render_messages(true);
+}
+
 async fn invite() {
     let Some(room) = room() else { return };
     let (id, name) = {
@@ -364,9 +564,9 @@ async fn invite() {
         (r.id.clone(), r.name.clone())
     };
     let link = format!(
-        "{}{}/app/#salon={id}",
+        "{}{}#salon={id}",
         window().location().origin().unwrap_or_default(),
-        base()
+        app::app_path(i18n::lang())
     );
     let nav: JsValue = window().navigator().into();
     if touch() && has(&nav, "share") {
@@ -374,7 +574,7 @@ async fn invite() {
         let _ = js_sys::Reflect::set(
             &data,
             &"title".into(),
-            &format!("Viens dans #{name} sur Alley").into(),
+            &fill(t().invite_title, &[&name]).into(),
         );
         let _ = js_sys::Reflect::set(&data, &"url".into(), &link.clone().into());
         if await_promise(call(&nav, "share", &[data.into()]))
@@ -384,11 +584,7 @@ async fn invite() {
             return;
         }
     }
-    copy(
-        &link,
-        "Lien du salon copié : il marche jusqu'à ce que le salon disparaisse.",
-    )
-    .await;
+    copy(&link, t().link_copied).await;
 }
 
 /// Les présents, le compte en tête de salon, l'état du bouton d'appel.
@@ -397,23 +593,16 @@ pub fn render_people() {
     let r = room.borrow();
     let in_call = app(|a| a.call.is_some());
     let me_name = app(|a| a.name.clone());
+    let t = t();
     if let Some(meta) = by_id("room-meta") {
-        meta.set_text_content(Some(&format!(
-            "{} · disparaît à {}",
-            people_label(r.present() as u64),
-            until(r.expires_at)
+        meta.set_text_content(Some(&fill(
+            t.room_meta,
+            &[&people_label(r.present() as u64), &until(r.expires_at)],
         )));
     }
     if let Some(btn) = by_id("call-btn") {
         toggle_class(&btn, "on", in_call);
-        let _ = btn.set_attribute(
-            "title",
-            if in_call {
-                "Raccrocher"
-            } else {
-                "Rejoindre l'appel du salon"
-            },
-        );
+        let _ = btn.set_attribute("title", if in_call { t.hang_up } else { t.join_call });
     }
     let Some(el) = by_id("members") else { return };
     let mut people: Vec<(String, String, bool)> = vec![(r.me.clone(), me_name, in_call)];
@@ -432,8 +621,8 @@ pub fn render_people() {
             &el,
             vec![
                 h("header.members-head")
-                    .child(h("strong").text("Présents"))
-                    .child(icon_btn("Fermer", "✕").on("click", |_| toggle_members(Some(false))))
+                    .child(h("strong").text(t.members))
+                    .child(icon_btn(t.close, "✕").on("click", |_| toggle_members(Some(false))))
                     .into(),
                 h("ul")
                     .children(people.iter().map(|(id, name, voice)| {
@@ -447,19 +636,15 @@ pub fn render_people() {
                             .child(
                                 h("span.name")
                                     .text(name)
-                                    .child((*id == me).then(|| h("small").text(" (vous)")))
+                                    .child((*id == me).then(|| h("small").text(t.you)))
                                     .child(voice.then(|| h("small").text(" 🔊"))),
                             )
                     }))
                     .into(),
                 h("div.fp")
-                    .child(h("small").text("Empreinte de la clé du salon"))
+                    .child(h("small").text(t.fp_label))
                     .child(h("code").text(if fp.is_empty() { "…".into() } else { fp }))
-                    .child(
-                        h("small.muted").text(
-                            "Identique chez tous les présents = personne ne s'est intercalé.",
-                        ),
-                    )
+                    .child(h("small.muted").text(t.fp_hint))
                     .into(),
             ],
         );
@@ -475,22 +660,17 @@ pub fn render_messages(stick: bool) {
     let (name, has_key) = (r.name.clone(), r.key.is_some());
     let msgs = r.msgs.clone();
     drop(r);
+    let t = t();
     scope("messages", || {
         let mut nodes: Vec<Child> = vec![
             h("div.channel-start")
                 .child(h("div.big-hash").text("#"))
-                .child(h("h2").text(format!("Bienvenue dans #{name}")))
-                .child(h("p").text(
-                    "Vous ne voyez que ce qui se dit à partir de maintenant : rien n'est gardé, ni avant, ni après. Tout est chiffré de bout en bout, et le salon disparaît à minuit.",
-                ))
+                .child(h("h2").text(fill(t.room_welcome, &[&name])))
+                .child(h("p").text(t.room_welcome_body))
                 .into(),
         ];
         if !has_key {
-            nodes.push(
-                h("div.loading")
-                    .text("🔑 Réception de la clé du salon…")
-                    .into(),
-            );
+            nodes.push(h("div.loading").text(t.receiving_key).into());
         }
         let mut prev: Option<&Msg> = None;
         for m in &msgs {
@@ -507,18 +687,21 @@ pub fn render_messages(stick: bool) {
 }
 
 fn message_node(m: &Msg, all: &[Msg], grouped: bool) -> El {
+    let t = t();
     let content: El = match m.kind.as_str() {
         "image" => {
             let src = m.media.clone();
             h("button.image")
+                .class_if("pending", m.pending)
                 .attr("type", "button")
-                .attr("aria-label", "Agrandir la photo")
+                .attr("aria-label", t.enlarge_photo)
                 .child(
                     h("img")
                         .attr("src", &m.media)
-                        .attr("alt", "Photo")
+                        .attr("alt", t.photo)
                         .attr("loading", "lazy"),
                 )
+                .child(m.pending.then(|| h("span.checking").text(t.checking)))
                 .on("click", move |_| lightbox(&src))
         }
         "audio" => h("audio.voice-note")
@@ -532,15 +715,15 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool) -> El {
     let reply = (!m.reply.is_empty()).then(|| {
         let target = all.iter().find(|t| t.mid == m.reply);
         let what = match target {
-            Some(t) if t.kind == "image" => "📷 Photo".to_owned(),
-            Some(t) if t.kind == "audio" => "🎤 Vocal".to_owned(),
-            Some(t) => t.text.chars().take(90).collect(),
-            None => "un message d'avant votre arrivée".to_owned(),
+            Some(m) if m.kind == "image" => t.photo_label.to_owned(),
+            Some(m) if m.kind == "audio" => t.voice_short.to_owned(),
+            Some(m) => m.text.chars().take(90).collect(),
+            None => t.before_arrival.to_owned(),
         };
         let mid = m.reply.clone();
         h("div.reply-ref")
             .child(h("span.curve"))
-            .child(target.map(|t| h("strong").text(format!("@{}", t.name))))
+            .child(target.map(|m| h("strong").text(format!("@{}", m.name))))
             .child(h("span").text(what))
             .on("click", move |_| scroll_to_message(&mid))
     });
@@ -548,22 +731,22 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool) -> El {
     let mid2 = mid.clone();
     let mid3 = mid.clone();
     let actions = h("div.actions")
-        .child(icon_btn("Répondre", "↩").on("click", move |_| start_reply(&mid)))
+        .child(icon_btn(t.reply, "↩").on("click", move |_| start_reply(&mid)))
         .child(
             (m.mine && m.kind == "text")
-                .then(|| icon_btn("Modifier", "✎").on("click", move |_| start_edit(&mid2))),
+                .then(|| icon_btn(t.edit, "✎").on("click", move |_| start_edit(&mid2))),
         )
         .child((m.kind == "text").then(|| {
-            icon_btn("Copier le texte", "⧉").click(move || {
-                let t = text.clone();
-                async move { copy(&t, "Copié !").await }
+            icon_btn(t.copy_text, "⧉").click(move || {
+                let text = text.clone();
+                async move { copy(&text, crate::i18n::t().copied).await }
             })
         }))
         .child(m.mine.then(|| {
-            icon_btn("Supprimer", "🗑")
+            icon_btn(t.delete, "🗑")
                 .class("danger")
                 .on("click", move |_| {
-                    if confirm("Supprimer ce message chez tout le monde ?") {
+                    if confirm(crate::i18n::t().confirm_delete) {
                         delete_message(&mid3);
                     }
                 })
@@ -591,7 +774,7 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool) -> El {
             h("div.body")
                 .child(meta)
                 .child(content)
-                .child(m.edited.then(|| h("small.edited").text("(modifié)"))),
+                .child(m.edited.then(|| h("small.edited").text(t.edited))),
         )
         .child(actions);
     if touch() {
@@ -628,11 +811,12 @@ pub fn render_typing() {
         .filter(|(_, p)| p.typing_until > now())
         .map(|(id, _)| r.name_of(id))
         .collect();
+    let t = t();
     let text = match names.len() {
         0 => String::new(),
-        1 => format!(" {} écrit…", names[0]),
-        2 | 3 => format!(" {} écrivent…", names.join(", ")),
-        _ => " Plusieurs personnes écrivent…".into(),
+        1 => fill(t.typing_one, &[&names[0]]),
+        2 | 3 => fill(t.typing_many, &[&names.join(", ")]),
+        _ => t.typing_lots.into(),
     };
     replace(
         &el,
@@ -668,14 +852,18 @@ pub fn render_call() {
             } else {
                 vec![
                     h("div.call-invite")
-                        .child(h("span").text(format!(
-                            "🔊 {} en appel",
-                            people_label(others as u64).replace("présent", "personne")
+                        .child(h("span").text(fill(
+                            if others <= 1 {
+                                t().in_call_one
+                            } else {
+                                t().in_call_many
+                            },
+                            &[&others.to_string()],
                         )))
                         .child(
                             h("button.primary")
                                 .attr("type", "button")
-                                .text("Rejoindre")
+                                .text(t().join)
                                 .click(|| async { join_call().await }),
                         )
                         .into(),
@@ -741,6 +929,7 @@ pub fn render_call() {
         let c = c.borrow();
         (c.muted, c.camera.is_some(), c.screen.is_some())
     };
+    let t = t();
     scope("call", || {
         let (c1, c2, c3) = (c.clone(), c.clone(), c.clone());
         let controls = h("div.call-controls")
@@ -749,7 +938,7 @@ pub fn render_call() {
                     .attr("type", "button")
                     .class_if("off", muted)
                     .text(if muted { "🔇" } else { "🎙️" })
-                    .child(h("span").text(if muted { "Micro coupé" } else { "Micro" }))
+                    .child(h("span").text(if muted { t.mic_off } else { t.mic }))
                     .on("click", move |_| {
                         call::toggle_mute(&c1);
                         if let Some(room) = crate::model::room() {
@@ -762,12 +951,12 @@ pub fn render_call() {
                     .attr("type", "button")
                     .class_if("on", camera)
                     .text("📷")
-                    .child(h("span").text(if camera { "Couper" } else { "Caméra" }))
+                    .child(h("span").text(if camera { t.camera_stop } else { t.camera }))
                     .click(move || {
                         let c = c2.clone();
                         async move {
                             if call::toggle_camera(&c).await.is_err() {
-                                toast("Caméra inaccessible.", true);
+                                toast(crate::i18n::t().camera_unavailable, true);
                             }
                             if let Some(room) = crate::model::room() {
                                 hello(&room, None);
@@ -780,7 +969,7 @@ pub fn render_call() {
                     .attr("type", "button")
                     .class_if("on", screen)
                     .text("🖥️")
-                    .child(h("span").text(if screen { "Arrêter" } else { "Écran" }))
+                    .child(h("span").text(if screen { t.screen_stop } else { t.screen }))
                     .click(move || {
                         let c = c3.clone();
                         async move {
@@ -795,7 +984,7 @@ pub fn render_call() {
                 h("button.hangup")
                     .attr("type", "button")
                     .text("📞")
-                    .child(h("span").text("Raccrocher"))
+                    .child(h("span").text(t.hang_up))
                     .on("click", |_| leave_call()),
             );
         replace(
@@ -814,12 +1003,13 @@ pub fn render_call() {
 // Écrire
 
 fn composer() -> El {
+    let t = t();
     let input = h("textarea#input")
         .attr("rows", "1")
-        .attr("placeholder", "Message chiffré…")
+        .attr("placeholder", t.message_placeholder)
         .attr("enterkeyhint", if touch() { "enter" } else { "send" })
         .attr("autocomplete", "off")
-        .attr("aria-label", "Votre message")
+        .attr("aria-label", t.your_message)
         .attr("maxlength", "20000")
         .el();
     let file = h("input")
@@ -899,9 +1089,9 @@ fn composer() -> El {
             };
             input.set_value("");
             spawn(async move {
-                toast("Chiffrement de la photo…", false);
+                toast(crate::i18n::t().checking_photo, false);
                 match read_image(&f).await {
-                    Ok(jpeg) => send_message("image", jpeg, ""),
+                    Ok(jpeg) => send_image(jpeg),
                     Err(e) => toast(e, true),
                 }
                 render_bar();
@@ -915,15 +1105,15 @@ fn composer() -> El {
         let submit = submit.clone();
         h("button.send")
             .attr("type", "button")
-            .attr("title", "Envoyer")
-            .attr("aria-label", "Envoyer")
+            .attr("title", t.send)
+            .attr("aria-label", t.send)
             .text("➤")
             .on("click", move |_| submit())
     };
     h("div.composer").child(h("div#bar")).child(
         h("div.input-row")
             .child(
-                icon_btn("Envoyer une photo (chiffrée)", "＋")
+                icon_btn(t.attach_photo, "＋")
                     .class("attach")
                     .on("click", move |_| {
                         if let Some(e) = file3.dyn_ref::<web_sys::HtmlElement>() {
@@ -934,7 +1124,7 @@ fn composer() -> El {
             .child(file)
             .child(input)
             .child(can_record.then(|| {
-                icon_btn("Message vocal (chiffré)", "🎤")
+                icon_btn(t.voice_message, "🎤")
                     .class("mic")
                     .id("mic")
                     .click(|| async { toggle_recording().await })
@@ -959,7 +1149,7 @@ async fn toggle_recording() {
         Err(e) => Err(e),
     };
     let Ok(stream) = stream else {
-        return toast("Micro inaccessible.", true);
+        return toast(t().mic_unavailable, true);
     };
     let stream: MediaStream = stream.unchecked_into();
     let mime = [
@@ -979,7 +1169,7 @@ async fn toggle_recording() {
     let Ok(rec) =
         web_sys::MediaRecorder::new_with_media_stream_and_media_recorder_options(&stream, &options)
     else {
-        return toast("Enregistrement impossible.", true);
+        return toast(t().recording_failed, true);
     };
     let chunks = Rc::new(RefCell::new(js_sys::Array::new()));
     let started = now();
@@ -1037,7 +1227,7 @@ async fn toggle_recording() {
         toggle_class(&mic, "recording", true);
     }
     let _ = rec.start_with_time_slice(1000);
-    toast("Enregistrement… touchez ⏺ pour envoyer.", false);
+    toast(t().recording, false);
     spawn(async move {
         loop {
             sleep(250).await;
@@ -1060,11 +1250,11 @@ fn render_bar() {
     let Some(bar) = by_id("bar") else { return };
     let (editing, reply) = app(|a| (a.editing.clone(), a.reply_to.clone()));
     scope("bar", || {
-        let close = || icon_btn("Annuler", "✕").on("click", |_| cancel_bars());
+        let close = || icon_btn(t().cancel, "✕").on("click", |_| cancel_bars());
         let content: Vec<Child> = if editing.is_some() {
             vec![
                 h("div.bar")
-                    .child(h("span").text("✎ Modification du message"))
+                    .child(h("span").text(t().editing_bar))
                     .child(close())
                     .into(),
             ]
@@ -1082,7 +1272,7 @@ fn render_bar() {
                 h("div.bar")
                     .child(
                         h("span")
-                            .text("Réponse à ")
+                            .text(t().reply_to)
                             .child(h("strong").text(format!("@{who}"))),
                     )
                     .child(close())
@@ -1243,12 +1433,13 @@ fn self_video(track: &web_sys::MediaStreamTrack, mirror: bool) -> Element {
     v.into()
 }
 
-async fn read_image(file: &web_sys::File) -> Result<String, String> {
+async fn read_image(file: &web_sys::File) -> Result<String, &'static str> {
+    let t = t();
     if !file.type_().starts_with("image/") {
-        return Err("Seules les images sont acceptées.".into());
+        return Err(t.only_images);
     }
-    let source = read_data_url(file).await.ok_or("Fichier illisible.")?;
-    let img = HtmlImageElement::new().map_err(|_| "image")?;
+    let source = read_data_url(file).await.ok_or(t.unreadable_file)?;
+    let img = HtmlImageElement::new().map_err(|_| t.unreadable_image)?;
     let loaded = js_sys::Promise::new(&mut |resolve, reject| {
         img.set_onload(Some(&resolve));
         img.set_onerror(Some(&reject));
@@ -1256,7 +1447,7 @@ async fn read_image(file: &web_sys::File) -> Result<String, String> {
     img.set_src(&source);
     wasm_bindgen_futures::JsFuture::from(loaded)
         .await
-        .map_err(|_| "Format d'image non pris en charge.")?;
+        .map_err(|_| t.unsupported_image)?;
     let (w, hgt) = (img.natural_width() as f64, img.natural_height() as f64);
     let scale = (1600.0 / w.max(hgt)).min(1.0);
     let canvas: HtmlCanvasElement = h("canvas").el().unchecked_into();
@@ -1266,7 +1457,7 @@ async fn read_image(file: &web_sys::File) -> Result<String, String> {
         .get_context("2d")
         .ok()
         .flatten()
-        .ok_or("canvas")?
+        .ok_or(t.unreadable_image)?
         .unchecked_into();
     ctx.set_fill_style_str("#fff");
     ctx.fill_rect(0.0, 0.0, canvas.width() as f64, canvas.height() as f64);
@@ -1279,7 +1470,7 @@ async fn read_image(file: &web_sys::File) -> Result<String, String> {
     );
     let url = canvas
         .to_data_url_with_type_and_encoder_options("image/jpeg", &JsValue::from_f64(0.82))
-        .map_err(|_| "Image illisible.")?;
+        .map_err(|_| t.unreadable_image)?;
     Ok(url
         .split_once(',')
         .map(|(_, b)| b.to_owned())
@@ -1414,10 +1605,10 @@ fn only_emoji(t: &str) -> bool {
 fn lightbox(src: &str) {
     let d: HtmlDialogElement = h("dialog.lightbox").el().unchecked_into();
     scope("lightbox", || {
-        let _ = d.append_child(&h("img").attr("src", src).attr("alt", "Photo").el());
+        let _ = d.append_child(&h("img").attr("src", src).attr("alt", t().photo).el());
         let d1 = d.clone();
         let _ = d.append_child(
-            &icon_btn("Fermer", "✕")
+            &icon_btn(t().close, "✕")
                 .class("close")
                 .on("click", move |_| d1.close())
                 .el(),
@@ -1471,9 +1662,13 @@ pub fn insecure() {
                 h("div.welcome")
                     .child(
                         h("div.welcome-card")
-                            .child(h("h1").text("Connexion non sécurisée"))
-                            .child(h("p").text("Alley chiffre tout dans votre navigateur et passe des appels, ce qui n'est possible qu'en HTTPS."))
-                            .child(h("a.button-link").attr("href", https).text("Ouvrir la version sécurisée")),
+                            .child(h("h1").text(t().insecure_title))
+                            .child(h("p").text(t().insecure_body))
+                            .child(
+                                h("a.button-link")
+                                    .attr("href", https)
+                                    .text(t().insecure_button),
+                            ),
                     )
                     .into(),
             ],
