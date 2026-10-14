@@ -378,6 +378,45 @@ impl Rooms {
         }
     }
 
+    /// Rouvre un salon que le serveur a oublié (redémarrage), sur
+    /// présentation de ce qu'il en a dit lui-même : sa signature doit être la
+    /// sienne, et la fin pas encore passée. C'est ainsi que les salons de
+    /// plusieurs jours survivent sans base de données : chaque navigateur qui
+    /// les connaît en garde la description signée. Renvoie `true` si le salon
+    /// est ouvert (rouvert, ou déjà là).
+    pub fn revive(&self, kept: &Kept, sig: &str) -> bool {
+        use ed25519_dalek::{Signature, Verifier};
+        let Some(sig) = STANDARD
+            .decode(sig.trim())
+            .ok()
+            .and_then(|b| <[u8; 64]>::try_from(b).ok())
+        else {
+            return false;
+        };
+        let statement = room_statement(&kept.id, &kept.name, kept.private, kept.expires_at);
+        let genuine = self
+            .signing_key()
+            .verifying_key()
+            .verify(&statement, &Signature::from_bytes(&sig))
+            .is_ok();
+        if !genuine || kept.expires_at <= now_ms() {
+            return false;
+        }
+        let Some(name) = clean_name(&kept.name) else {
+            return false;
+        };
+        let mut rooms = self.rooms.lock().unwrap();
+        if rooms.contains_key(&kept.id) {
+            return true;
+        }
+        if rooms.len() >= MAX_ROOMS {
+            return false;
+        }
+        let room = Room::new(kept.id.clone(), name, kept.private, kept.expires_at, true);
+        rooms.insert(kept.id.clone(), room);
+        true
+    }
+
     /// Un salon de plusieurs jours, à garder en base ; `None` pour un salon
     /// qui finit à minuit.
     pub fn kept(&self, id: &str) -> Option<Kept> {
@@ -738,6 +777,40 @@ mod tests {
         rooms.sweep();
         assert_eq!(rooms.count(), (0, 0));
         assert!(rooms.known(std::slice::from_ref(&id)).is_empty());
+    }
+
+    #[test]
+    fn a_forgotten_room_comes_back_from_its_signed_description() {
+        let before = Rooms::default();
+        let info = before.create("Week-end", true, 0, 3).unwrap();
+        let kept = Kept {
+            id: info["id"].as_str().unwrap().to_owned(),
+            name: "Week-end".into(),
+            private: true,
+            expires_at: info["expires_at"].as_i64().unwrap(),
+        };
+        let sig = info["sig"].as_str().unwrap();
+        // Le serveur redémarre avec la même clé (ALLEY_SIGNING_KEY).
+        let after = Rooms::default();
+        assert!(!after.revive(&kept, sig), "une autre clé : refusé");
+        after.set_signing_key(before.signing_seed());
+        let renamed = Kept {
+            name: "Autre nom".into(),
+            ..kept.clone()
+        };
+        assert!(!after.revive(&renamed, sig), "description modifiée");
+        let longer = Kept {
+            expires_at: kept.expires_at + DAY_MS,
+            ..kept.clone()
+        };
+        assert!(!after.revive(&longer, sig), "fin repoussée");
+        assert!(!after.revive(&kept, "abîmée"));
+        assert!(after.revive(&kept, sig));
+        assert!(after.revive(&kept, sig), "déjà ouvert");
+        assert_eq!(after.info(&kept.id).unwrap()["name"], "Week-end");
+        assert_eq!(after.info(&kept.id).unwrap()["sig"], sig);
+        let mut a = after.join(&kept.id, "xa".into(), None, None, None).unwrap();
+        assert_eq!(next(&mut a)["type"], "welcome");
     }
 
     #[test]
