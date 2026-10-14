@@ -1,0 +1,38 @@
+# Lu par le buildpack Heroku emk/rust (https://github.com/emk/heroku-buildpack-rust)
+# avant la compilation. Le buildpack ne lance qu'un `cargo build --release` ;
+# Alley a besoin de deux étapes avant : le navigateur compilé en WebAssembly
+# (client/pkg, rangé dans le binaire) et les modèles de modération (models/).
+# Ce fichier est « sourcé » par le script du buildpack : la fonction `cargo`
+# ci-dessous remplace la commande pour son `cargo build`, fait les deux
+# étapes, puis la vraie compilation.
+
+VERSION=stable
+RUST_CARGO_BUILD_FLAGS="--release --bin alley"
+
+# Heroku arrête une construction au bout de 15 minutes. Sans LTO et en
+# 16 morceaux, le serveur compile ~30 % plus vite (mesuré : 6 min au lieu
+# de 8 min 40 sur 2 cœurs), pour un binaire à peine plus gros.
+export CARGO_PROFILE_RELEASE_LTO=off
+export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+
+cargo() {
+    if [ "${1:-}" != "build" ]; then
+        command cargo "$@"
+        return
+    fi
+    echo "-----> Navigateur (WebAssembly)"
+    rustup target add wasm32-unknown-unknown
+    command cargo xtask web
+    echo "-----> Modèles de modération"
+    # Gardés dans le cache de Heroku : téléchargés une fois, vérifiés à
+    # chaque construction (empreintes SHA-256). Le cache n'est qu'un
+    # raccourci : s'il manque ou ne s'écrit pas, rien n'échoue.
+    mkdir -p models
+    cp "$CACHE_DIR"/alley-models/*.onnx models/ 2>/dev/null || true
+    command cargo xtask models
+    mkdir -p "$CACHE_DIR/alley-models" \
+        && cp models/*.onnx "$CACHE_DIR/alley-models/" \
+        || echo "       (modèles non mis en cache)"
+    echo "-----> Serveur"
+    command cargo "$@"
+}
