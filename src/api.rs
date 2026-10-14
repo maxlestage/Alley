@@ -57,6 +57,10 @@ pub struct NewRoom {
 /// l'inondation ; la signalisation d'un appel en envoie une rafale).
 const RELAY_BURST: u32 = 200;
 
+/// Connexions en direct depuis une même adresse, au plus (une famille, un
+/// bureau derrière la même box…).
+const MAX_CONNECTIONS_PER_IP: usize = 16;
+
 /// `GET /api/v1/rooms?q=`
 async fn list(req: Request) -> Json<Value> {
     let rooms = req.state::<Rooms>();
@@ -158,6 +162,11 @@ async fn live(req: Request, socket: ws::WebSocket) {
     }
     let rooms = req.state::<Rooms>();
     rooms.sweep();
+    // Quelques connexions par adresse, pas des centaines.
+    if ip.is_some_and(|ip| rooms.connections_from(ip) >= MAX_CONNECTIONS_PER_IP) {
+        let _ = socket.close(4429, "trop de connexions").await;
+        return;
+    }
     let Some(joined) = x.and_then(|x| rooms.join(&id, x, ip, tag.as_deref())) else {
         let _ = socket.close(4404, "salon introuvable ou complet").await;
         return;
@@ -203,7 +212,8 @@ async fn live(req: Request, socket: ws::WebSocket) {
     let mut last_image: Option<Instant> = None;
     let mut banned = false;
     while let Some(Ok(message)) = rx.recv().await {
-        if forward.is_finished() {
+        // Fermé, ou bloqué entre-temps (depuis une autre connexion).
+        if forward.is_finished() || ip.is_some_and(|ip| moderation.is_banned(ip)) {
             break;
         }
         let text = match message {
@@ -216,7 +226,19 @@ async fn live(req: Request, socket: ws::WebSocket) {
             sent = 0;
         }
         sent += 1;
-        if sent > RELAY_BURST || text.len() > MAX_TOKEN + 256 {
+        let too_much = sent > RELAY_BURST || text.len() > MAX_TOKEN + 256;
+        if too_much {
+            // Une image écartée reçoit quand même une réponse : sinon elle
+            // resterait « en vérification » chez son expéditeur.
+            if text.contains("\"type\":\"image\"")
+                && let Some(mid) = image_id(&text)
+            {
+                rooms.notify(
+                    &id,
+                    &me,
+                    &json!({ "type": "moderated", "id": mid, "reason": "slow_down" }),
+                );
+            }
             continue;
         }
         let Ok(value) = serde_json::from_str::<Value>(&text) else {
@@ -266,6 +288,18 @@ async fn live(req: Request, socket: ws::WebSocket) {
     rooms.leave(&id, &me);
 }
 
+/// L'identifiant d'une image dans un message trop gros pour être lu en
+/// entier : `"id":"…"` (16 caractères hexadécimaux au plus).
+fn image_id(text: &str) -> Option<String> {
+    let start = text.find("\"id\":\"")? + 6;
+    let id: String = text[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit())
+        .take(32)
+        .collect();
+    (!id.is_empty()).then_some(id)
+}
+
 /// Vérifie une image puis la relaie, ou la refuse ; une image à caractère
 /// sexuel ou montrant de la drogue bloque l'adresse de l'expéditeur.
 /// Renvoie `true` si la connexion doit être fermée.
@@ -295,6 +329,12 @@ async fn image(
     };
     let Some(jpeg) = open_token(&key, c) else {
         refuse("invalid", false);
+        return false;
+    };
+    // La file d'attente est bornée : pleine, l'image est refusée tout de
+    // suite plutôt que de s'accumuler en mémoire.
+    let Some(_slot) = moderation.enqueue() else {
+        refuse("slow_down", false);
         return false;
     };
     match moderation.judge(jpeg).await {

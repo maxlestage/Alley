@@ -105,6 +105,15 @@ fn today() -> (u32, u32, u32) {
 
 /// Entre dans un salon : une identité X25519 jetable, et la connexion.
 pub async fn join_room(id: &str) {
+    rejoin(id, 0).await;
+}
+
+/// Entre (ou revient) dans un salon, en comptant les tentatives : au-delà
+/// de trois, on abandonne.
+async fn rejoin(id: &str, retries: u32) {
+    if retries > 3 {
+        return leave_room(Some(t().connection_lost));
+    }
     leave_room(None);
     let info = match request("GET", &format!("/api/v1/rooms/{id}"), &[], None).await {
         Ok(info) => info,
@@ -132,7 +141,7 @@ pub async fn join_room(id: &str) {
         socket: None,
         day: today(),
         leaving: false,
-        retries: 0,
+        retries,
     };
     let room: RoomRef = Rc::new(std::cell::RefCell::new(room));
     app(|a| {
@@ -254,7 +263,7 @@ async fn lost(room: &RoomRef, code: u16) {
     // On revient comme un nouvel arrivant : rien n'a été gardé.
     let id = room.borrow().id.clone();
     toast(t().reconnecting, false);
-    join_room(&id).await;
+    rejoin(&id, retries).await;
 }
 
 fn is_current(room: &RoomRef) -> bool {
@@ -309,7 +318,6 @@ fn on_event(room: &RoomRef, event: Value) {
                 let mut r = room.borrow_mut();
                 r.me = event["you"].as_str().unwrap_or_default().to_owned();
                 r.order = event["order"].as_u64().unwrap_or_default();
-                r.retries = 0;
                 if let Some(t) = event["room"]["expires_at"].as_f64() {
                     r.expires_at = t;
                 }
@@ -339,9 +347,12 @@ fn on_event(room: &RoomRef, event: Value) {
                         && room.borrow().key.is_none()
                         && is_current(&room)
                     {
-                        let id = room.borrow().id.clone();
+                        let (id, retries) = {
+                            let r = room.borrow();
+                            (r.id.clone(), r.retries + 1)
+                        };
                         toast(t().no_key_retry, true);
-                        join_room(&id).await;
+                        rejoin(&id, retries).await;
                     }
                 });
             }
@@ -377,13 +388,16 @@ fn on_event(room: &RoomRef, event: Value) {
             let blob = event["blob"].as_str().unwrap_or_default();
             let got = {
                 let mut r = room.borrow_mut();
-                if r.key.is_some() {
+                // Seuls les trois plus anciens présents remettent la clé :
+                // un autre ne peut pas nous en imposer une à lui.
+                if r.key.is_some() || !r.may_hand_key(from) {
                     None
                 } else {
                     let x = r.peers.get(from).map(|p| p.x.clone()).unwrap_or_default();
                     match r.identity.unwrap_group_key(blob, &x) {
                         Some(key) => {
                             r.set_key(key);
+                            r.retries = 0;
                             Some(std::mem::take(&mut r.pending))
                         }
                         None => None,
@@ -1034,7 +1048,18 @@ pub fn switch_lang(lang: Lang) {
     let _ = window()
         .history()
         .map(|h| h.replace_state_with_url(&JsValue::NULL, "", Some(&app_path(lang))));
+    // Ce qui était déjà saisi (connexion, recherche) reste saisi.
+    let fields = ["username", "password", "q"];
+    let typed: Vec<Option<String>> = fields
+        .iter()
+        .map(|f| by_id(f).map(|el| input_value(&el)))
+        .collect();
     ui::render();
+    for (field, value) in fields.iter().zip(typed) {
+        if let (Some(el), Some(value)) = (by_id(field), value) {
+            set_input_value(&el, &value);
+        }
+    }
 }
 
 /// Alley n'a plus de service worker (rien à ouvrir hors ligne) : retire
