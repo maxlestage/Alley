@@ -1,5 +1,5 @@
-//! Démarre Alley sur `PORT` (fourni par Heroku), 3000 sinon. Rien n'est
-//! enregistré : les salons vivent en mémoire.
+//! Démarre Alley sur `PORT` (fourni par Heroku), 3000 sinon. Aucun message
+//! n'est enregistré : les salons vivent en mémoire.
 //!
 //! - `alley export <dossier>` écrit la version GitHub Pages (voir
 //!   `alley::export`) ;
