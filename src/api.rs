@@ -55,12 +55,13 @@ pub struct NewRoom {
     /// le salon disparaît à minuit chez lui.
     #[serde(default)]
     pub tz: i64,
-    /// Le secret d'abonnement du compte ([`crate::billing`]) et l'abonnement
-    /// que connaît le navigateur : ses salons durent 3 ou 7 jours.
+    /// Le secret de paiement du compte ([`crate::billing`]) et la période
+    /// payée que connaît le navigateur : ses salons restent ouverts jusqu'à
+    /// la fin de celle-ci.
     #[serde(default)]
     pub billing: Option<String>,
     #[serde(default)]
-    pub subscription: Option<String>,
+    pub payment: Option<String>,
 }
 
 /// Jetons relayés par connexion, au plus, par fenêtre de 10 s (contre
@@ -122,11 +123,11 @@ async fn create(req: Request) -> (u16, Json<Value>) {
             Json(json!({ "error": "forbidden_name", "reason": category.code() })),
         );
     }
-    let days = req
+    let until = req
         .state::<crate::billing::Billing>()
-        .days_for(body.billing.as_deref(), body.subscription.as_deref())
+        .until_for(body.billing.as_deref(), body.payment.as_deref())
         .await;
-    match rooms.create(&body.name, body.private, body.tz, days) {
+    match rooms.create(&body.name, body.private, body.tz, until) {
         Some(room) => {
             // Un salon de plusieurs jours survit aux redémarrages.
             if let Some(kept) = room["id"].as_str().and_then(|id| rooms.kept(id))

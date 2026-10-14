@@ -1,5 +1,8 @@
 //! Démarre Alley sur `PORT` (fourni par Heroku), 3000 sinon. Aucun message
-//! n'est enregistré : les salons vivent en mémoire.
+//! n'est enregistré : les salons vivent en mémoire. Aucune base externe non
+//! plus : seulement un fichier SQLite local (`ALLEY_SQLITE`, `alley.db` par
+//! défaut), même si `DATABASE_URL` est réglé ; le reste est dans le
+//! `localStorage` des navigateurs et chez Stripe.
 //!
 //! - `alley export <dossier>` écrit la version GitHub Pages (voir
 //!   `alley::export`) ;
@@ -29,7 +32,10 @@ fn main() -> std::io::Result<()> {
         }
         _ => {
             println!("Alley 🔒 écrit avec Paquets 📦, chiffré avec Brocolis 🥦");
-            alley::app().run()
+            let path = std::env::var("ALLEY_SQLITE").unwrap_or_else(|_| "alley.db".into());
+            let mut app = alley::app();
+            app.database(format!("sqlite://{path}"));
+            app.run()
         }
     }
 }
