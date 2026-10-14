@@ -1,16 +1,39 @@
 {
   "name": "Alley",
-  "description": "Alley : des salons de discussion éphémères, chiffrés de bout en bout. Un pseudonyme, rien n'est enregistré, tout disparaît à minuit. Écrit avec Paquets, chiffré avec Brocolis.",
+  "description": "Salons de discussion éphémères, chiffrés de bout en bout : un pseudonyme suffit, rien n'est enregistré, tout disparaît à minuit. En Rust, servi par Paquets, chiffré avec Brocolis.",
+  "repository": "https://github.com/maxlestage/Alley",
+  "website": "https://maxlestage.github.io/Alley/",
   "keywords": [
     "chat",
     "e2ee",
     "ephemeral",
     "rust",
-    "paquets",
-    "brocolis",
-    "pwa",
-    "webassembly"
+    "webassembly",
+    "websocket",
+    "pwa"
   ],
   "stack": "container",
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "env": {
+    "ALLEY_ALLOWED_ORIGINS": {
+      "description": "Les sites autorisés à utiliser ce serveur depuis un autre domaine (la version GitHub Pages), séparés par des virgules.",
+      "value": "https://maxlestage.github.io",
+      "required": false
+    },
+    "ALLEY_BAN_DAYS": {
+      "description": "Durée, en jours, du blocage d'une adresse IP qui a envoyé une image interdite.",
+      "value": "30",
+      "required": false
+    },
+    "ALLEY_ICE_SERVERS": {
+      "description": "Facultatif : des serveurs TURN pour les appels sur les réseaux qui bloquent le pair-à-pair (JSON RTCIceServer[]).",
+      "required": false
+    }
+  },
   "success_url": "/"
 }
