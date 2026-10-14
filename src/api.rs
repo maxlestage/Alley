@@ -17,9 +17,11 @@
 //! - `{"type":"key","to":…,"blob":…}` : la clé du salon, emballée pour un
 //!   nouvel arrivant avec sa clé publique X25519 ;
 //! - `{"type":"image","id":…,"key":…,"c":…,"data":…}` : une image, que le
-//!   serveur vérifie avant de la relayer ([`crate::moderation`]).
+//!   serveur vérifie avant de la relayer ([`crate::moderation`]) ;
+//! - `{"type":"expel","to":…}` : l'administrateur exclut un membre.
 //!
-//! Le serveur répond par `welcome`, `joined`, `left`, `relay` (avec `from`),
+//! Le serveur répond par `welcome` (avec `admin`), `admin` (l'administrateur
+//! a changé), `joined`, `left`, `relay` (avec `from`),
 //! `key`, `sent` / `moderated` (le sort d'une image) et `closed`. Il ne garde
 //! rien.
 //!
@@ -35,7 +37,7 @@ use crate::protocol::{
     MAX_TOKEN, WRAPPED_KEY_LEN, is_b64_len, is_token, key_commitment, key_from_b64, open_token,
     public_key_from_url,
 };
-use crate::rooms::{self, Rooms, is_tag};
+use crate::rooms::{self, JoinError, Rooms, is_tag};
 
 /// Une erreur que le navigateur traduit : `{"error": code}`.
 fn fail(status: u16, code: &str) -> (u16, Json<Value>) {
@@ -167,9 +169,20 @@ async fn live(req: Request, socket: ws::WebSocket) {
         let _ = socket.close(4429, "trop de connexions").await;
         return;
     }
-    let Some(joined) = x.and_then(|x| rooms.join(&id, x, ip, tag.as_deref())) else {
+    let Some(x) = x else {
         let _ = socket.close(4404, "salon introuvable ou complet").await;
         return;
+    };
+    let joined = match rooms.join(&id, x, ip, tag.as_deref()) {
+        Ok(joined) => joined,
+        Err(JoinError::Barred) => {
+            let _ = socket.close(4410, "exclu").await;
+            return;
+        }
+        Err(JoinError::Gone) => {
+            let _ = socket.close(4404, "salon introuvable ou complet").await;
+            return;
+        }
     };
     let me = joined.me.clone();
     let mut inbox = joined.inbox;
@@ -186,8 +199,15 @@ async fn live(req: Request, socket: ws::WebSocket) {
                     Some(event) => {
                         let closing = event.contains("\"type\":\"closed\"");
                         let banned = closing && event.contains("\"reason\":\"banned\"");
+                        let expelled = closing && event.contains("\"reason\":\"expelled\"");
                         if tx.send(event).await.is_err() || closing {
-                            let code = if banned { 4403 } else { 4000 };
+                            let code = if banned {
+                                4403
+                            } else if expelled {
+                                4410
+                            } else {
+                                4000
+                            };
                             let _ = tx.close(code, "salon fermé").await;
                             break;
                         }
@@ -256,6 +276,12 @@ async fn live(req: Request, socket: ws::WebSocket) {
                     && is_b64_len(blob, WRAPPED_KEY_LEN)
                 {
                     rooms.hand_key(&id, &me, to, blob);
+                }
+            }
+            // L'administrateur exclut un membre.
+            Some("expel") => {
+                if let Some(target) = to {
+                    rooms.expel(&id, &me, target);
                 }
             }
             Some("image") => {
