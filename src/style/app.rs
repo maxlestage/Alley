@@ -1860,6 +1860,21 @@ pub fn app() -> String {
         &[("padding", "8px 0"), ("text-align", "left")],
     );
     s.rule(".key-badge", &[("font-size", "12px")]);
+    // L'administration du salon.
+    s.rule(".member .name", &[("flex", "1"), ("min-width", "0")]);
+    s.rule(
+        "button.expel",
+        &[
+            ("margin-left", "auto"),
+            ("padding", "4px 10px"),
+            ("border-radius", "8px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "transparent"),
+            ("color", "var(--danger)"),
+            ("font-size", "12px"),
+            ("font-weight", "600"),
+        ],
+    );
     // ---- Le salon ------------------------------------------------------------
     s.rule(
         ".room-layout, .room-layout.members-open",
