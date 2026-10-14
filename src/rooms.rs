@@ -28,7 +28,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
@@ -137,6 +137,9 @@ struct Room {
     next_order: u64,
     /// Vide depuis : le premier à céder sa place quand elle manque.
     empty_since: Option<Instant>,
+    /// Un salon de plusieurs jours (abonnement) : gardé en base, il survit à
+    /// un redémarrage du serveur et ne cède sa place qu'en dernier.
+    long: bool,
     /// Les marques de ceux qui y sont venus connectés.
     tags: HashSet<String>,
     /// La marque du propriétaire (l'administrateur connecté avec un compte).
@@ -149,10 +152,32 @@ struct Room {
 }
 
 impl Room {
+    fn new(id: String, name: String, private: bool, expires_at: i64, long: bool) -> Room {
+        Room {
+            id,
+            key: normalize(&name),
+            name,
+            private,
+            expires_at,
+            created: Instant::now(),
+            members: BTreeMap::new(),
+            next_order: 0,
+            // Rouvert après un redémarrage : vide, il peut céder sa place.
+            empty_since: long.then(Instant::now),
+            long,
+            tags: HashSet::new(),
+            owner_tag: None,
+            admin: None,
+            barred_tags: HashSet::new(),
+            barred_ips: HashSet::new(),
+        }
+    }
+
     /// Garde-t-on ce salon ? Jusqu'à minuit, s'il a été rejoint au moins une
     /// fois ; une minute sinon.
     fn alive(&self, now: i64) -> bool {
-        self.expires_at > now && (self.next_order > 0 || self.created.elapsed() < UNJOINED_TTL)
+        self.expires_at > now
+            && (self.next_order > 0 || self.long || self.created.elapsed() < UNJOINED_TTL)
     }
 
     /// Désigne l'administrateur : le propriétaire s'il est là, sinon celui
@@ -233,11 +258,15 @@ pub struct Joined {
     pub inbox: mpsc::Receiver<String>,
 }
 
+/// Les salons. Une copie partage le même état (la base le recharge au
+/// démarrage, avant la première requête).
+#[derive(Clone)]
 pub struct Rooms {
-    rooms: Mutex<HashMap<String, Room>>,
-    /// La clé qui signe ce que le serveur dit des salons, tirée au démarrage
-    /// (les salons, en mémoire, ne survivent pas à un redémarrage non plus).
-    key: SigningKey,
+    rooms: Arc<Mutex<HashMap<String, Room>>>,
+    /// La clé qui signe ce que le serveur dit des salons : tirée au premier
+    /// démarrage, puis gardée en base ([`crate::billing::restore`]) pour que
+    /// les salons de plusieurs jours restent vérifiables après un redémarrage.
+    key: Arc<RwLock<SigningKey>>,
 }
 
 impl Default for Rooms {
@@ -245,49 +274,49 @@ impl Default for Rooms {
         let mut seed = [0u8; 32];
         getrandom::getrandom(&mut seed).expect("générateur aléatoire du système");
         Rooms {
-            rooms: Mutex::default(),
-            key: SigningKey::from_bytes(&seed),
+            rooms: Arc::default(),
+            key: Arc::new(RwLock::new(SigningKey::from_bytes(&seed))),
         }
     }
 }
 
+/// Ce que la base garde d'un salon de plusieurs jours : de quoi le rouvrir,
+/// rien de plus (ni membres, ni messages).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Kept {
+    pub id: String,
+    pub name: String,
+    pub private: bool,
+    pub expires_at: i64,
+}
+
 impl Rooms {
     /// Crée un salon — ou, pour un salon public, rejoint celui qui porte déjà
-    /// ce nom. `offset_min` : le décalage horaire du créateur.
-    pub fn create(&self, name: &str, private: bool, offset_min: i64) -> Option<Value> {
+    /// ce nom. `offset_min` : le décalage horaire du créateur ; `days` : 1
+    /// (jusqu'à minuit), ou 3 et 7 avec un abonnement (jusqu'au minuit qui
+    /// clôt le troisième ou le septième jour).
+    pub fn create(&self, name: &str, private: bool, offset_min: i64, days: u32) -> Option<Value> {
         let name = clean_name(name)?;
         let key = normalize(&name);
         let mut rooms = self.rooms.lock().unwrap();
         if !private && let Some(room) = rooms.values().find(|r| !r.private && r.key == key) {
-            return Some(room.info(&self.key));
+            return Some(room.info(&self.signing_key()));
         }
         if rooms.len() >= MAX_ROOMS {
-            // La place manque : le salon vide depuis le plus longtemps la cède.
+            // La place manque : le salon vide depuis le plus longtemps la cède
+            // (un salon de plusieurs jours en dernier).
             let oldest = rooms
                 .iter()
-                .filter_map(|(id, r)| r.empty_since.map(|t| (t, id.clone())))
+                .filter_map(|(id, r)| r.empty_since.map(|t| (r.long, t, id.clone())))
                 .min()?;
-            rooms.remove(&oldest.1);
+            rooms.remove(&oldest.2);
         }
         // Un salon privé n'est trouvable que par son lien : identifiant long.
         let id = random_id(if private { 16 } else { 6 });
-        let room = Room {
-            id: id.clone(),
-            name,
-            key,
-            private,
-            expires_at: next_midnight(now_ms(), offset_min),
-            created: Instant::now(),
-            members: BTreeMap::new(),
-            next_order: 0,
-            empty_since: None,
-            tags: HashSet::new(),
-            owner_tag: None,
-            admin: None,
-            barred_tags: HashSet::new(),
-            barred_ips: HashSet::new(),
-        };
-        let info = room.info(&self.key);
+        let days = days.clamp(1, 7);
+        let expires_at = next_midnight(now_ms(), offset_min) + i64::from(days - 1) * DAY_MS;
+        let room = Room::new(id.clone(), name, private, expires_at, days > 1);
+        let info = room.info(&self.signing_key());
         rooms.insert(id, room);
         Some(info)
     }
@@ -310,13 +339,56 @@ impl Rooms {
         found
             .into_iter()
             .take(100)
-            .map(|r| r.info(&self.key))
+            .map(|r| r.info(&self.signing_key()))
             .collect()
+    }
+
+    fn signing_key(&self) -> SigningKey {
+        self.key.read().unwrap().clone()
     }
 
     /// La clé publique qui vérifie ce que le serveur dit des salons (base64).
     pub fn public_key(&self) -> String {
-        STANDARD.encode(self.key.verifying_key().to_bytes())
+        STANDARD.encode(self.signing_key().verifying_key().to_bytes())
+    }
+
+    /// La clé de signature gardée en base (sa graine, 32 octets).
+    pub fn set_signing_key(&self, seed: [u8; 32]) {
+        *self.key.write().unwrap() = SigningKey::from_bytes(&seed);
+    }
+
+    /// La graine de la clé de signature, pour la garder en base.
+    pub fn signing_seed(&self) -> [u8; 32] {
+        self.signing_key().to_bytes()
+    }
+
+    /// Rouvre les salons de plusieurs jours gardés en base (au démarrage).
+    pub fn restore(&self, kept: Vec<Kept>) {
+        let now = now_ms();
+        let mut rooms = self.rooms.lock().unwrap();
+        for k in kept {
+            let Some(name) = clean_name(&k.name) else {
+                continue;
+            };
+            if k.expires_at <= now || rooms.contains_key(&k.id) || rooms.len() >= MAX_ROOMS {
+                continue;
+            }
+            let room = Room::new(k.id.clone(), name, k.private, k.expires_at, true);
+            rooms.insert(k.id, room);
+        }
+    }
+
+    /// Un salon de plusieurs jours, à garder en base ; `None` pour un salon
+    /// qui finit à minuit.
+    pub fn kept(&self, id: &str) -> Option<Kept> {
+        let rooms = self.rooms.lock().unwrap();
+        let r = rooms.get(id).filter(|r| r.long)?;
+        Some(Kept {
+            id: r.id.clone(),
+            name: r.name.clone(),
+            private: r.private,
+            expires_at: r.expires_at,
+        })
     }
 
     pub fn info(&self, id: &str) -> Option<Value> {
@@ -324,7 +396,7 @@ impl Rooms {
             .lock()
             .unwrap()
             .get(id)
-            .map(|r| r.info(&self.key))
+            .map(|r| r.info(&self.signing_key()))
     }
 
     /// Parmi ces identifiants (les salons dont se souvient un appareil), ceux
@@ -333,7 +405,7 @@ impl Rooms {
         let rooms = self.rooms.lock().unwrap();
         ids.iter()
             .take(MAX_KNOWN)
-            .filter_map(|id| rooms.get(id).map(|r| r.info(&self.key)))
+            .filter_map(|id| rooms.get(id).map(|r| r.info(&self.signing_key())))
             .collect()
     }
 
@@ -346,7 +418,7 @@ impl Rooms {
         found
             .into_iter()
             .take(100)
-            .map(|r| r.info(&self.key))
+            .map(|r| r.info(&self.signing_key()))
             .collect()
     }
 
@@ -406,7 +478,7 @@ impl Rooms {
             "you": me,
             "order": order,
             "admin": room.admin,
-            "room": room.info(&self.key),
+            "room": room.info(&self.signing_key()),
             "peers": peers,
         });
         let _ = tx.try_send(welcome.to_string());
@@ -610,10 +682,10 @@ mod tests {
     #[test]
     fn a_room_lives_until_midnight_even_empty() {
         let rooms = Rooms::default();
-        let room = rooms.create("Café", false, 120).unwrap();
+        let room = rooms.create("Café", false, 120, 1).unwrap();
         let id = room["id"].as_str().unwrap().to_owned();
         // Le même nom public mène au même salon.
-        assert_eq!(rooms.create("cafe", false, 0).unwrap()["id"], id);
+        assert_eq!(rooms.create("cafe", false, 0, 1).unwrap()["id"], id);
         assert_eq!(rooms.list("CAFÉ").len(), 1);
         assert!(rooms.list("thé").is_empty());
 
@@ -690,7 +762,7 @@ mod tests {
         let a = rooms.join(&first, "x".into(), None, None, None).unwrap();
         rooms.leave(&first, &a.me);
         // Jamais rejoint : un salon ne dure qu'une minute.
-        let unjoined = rooms.create("Personne", true, 0).unwrap()["id"]
+        let unjoined = rooms.create("Personne", true, 0, 1).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -704,24 +776,24 @@ mod tests {
         rooms.sweep();
         assert!(rooms.info(&unjoined).is_none());
         for i in 1..MAX_ROOMS {
-            rooms.create(&format!("Salon {i}"), true, 0).unwrap();
+            rooms.create(&format!("Salon {i}"), true, 0, 1).unwrap();
         }
         assert_eq!(rooms.count().0, MAX_ROOMS);
         // Plein : le salon vide cède sa place ; ensuite, plus rien.
-        assert!(rooms.create("Encore un", true, 0).is_some());
+        assert!(rooms.create("Encore un", true, 0, 1).is_some());
         assert!(rooms.info(&first).is_none());
-        assert!(rooms.create("De trop", true, 0).is_none());
+        assert!(rooms.create("De trop", true, 0, 1).is_none());
     }
 
     #[test]
     fn a_tag_finds_its_rooms_again() {
         let rooms = Rooms::default();
         let tag = "ab".repeat(32);
-        let secret = rooms.create("Secret", true, 0).unwrap()["id"]
+        let secret = rooms.create("Secret", true, 0, 1).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
-        let public = rooms.create("Place", false, 0).unwrap()["id"]
+        let public = rooms.create("Place", false, 0, 1).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -756,7 +828,7 @@ mod tests {
     }
 
     fn room_id(rooms: &Rooms) -> String {
-        rooms.create("Club", false, 0).unwrap()["id"]
+        rooms.create("Club", false, 0, 1).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned()
@@ -839,7 +911,7 @@ mod tests {
     #[test]
     fn a_banned_address_is_disconnected() {
         let rooms = Rooms::default();
-        let id = rooms.create("Place", false, 0).unwrap()["id"]
+        let id = rooms.create("Place", false, 0, 1).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();
@@ -871,7 +943,7 @@ mod tests {
     #[test]
     fn midnight_closes_the_room_for_everyone() {
         let rooms = Rooms::default();
-        let id = rooms.create("Nuit", true, 0).unwrap()["id"]
+        let id = rooms.create("Nuit", true, 0, 1).unwrap()["id"]
             .as_str()
             .unwrap()
             .to_owned();

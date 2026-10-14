@@ -150,7 +150,7 @@ pub static FR: Texts = Texts {
         (
             "🌙",
             "Tout s'efface à minuit",
-            "À minuit dans votre pays, l'écran se vide ; à minuit dans le pays de son créateur, le salon disparaît.",
+            "À minuit dans votre pays, l'écran se vide ; à minuit dans le pays de son créateur, le salon disparaît. Abonné (4,99 € ou 9,99 € par mois, sans formule à l'année), vos salons durent 3 ou 7 jours.",
         ),
         (
             "🎙️",
@@ -328,7 +328,7 @@ pub static EN: Texts = Texts {
         (
             "🌙",
             "Everything is erased at midnight",
-            "At midnight in your country, your screen is cleared; at midnight in its creator's country, the room disappears.",
+            "At midnight in your country, your screen is cleared; at midnight in its creator's country, the room disappears. As a subscriber (€4.99 or €9.99 per month, no yearly plan), your rooms last 3 or 7 days.",
         ),
         (
             "🎙️",
@@ -506,7 +506,7 @@ pub static ES: Texts = Texts {
         (
             "🌙",
             "Todo se borra a medianoche",
-            "A medianoche en tu país, la pantalla se vacía; a medianoche en el país de quien la creó, la sala desaparece.",
+            "A medianoche en tu país, la pantalla se vacía; a medianoche en el país de quien la creó, la sala desaparece. Con una suscripción (4,99 € o 9,99 € al mes, sin plan anual), tus salas duran 3 o 7 días.",
         ),
         (
             "🎙️",

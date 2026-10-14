@@ -40,6 +40,88 @@ pub async fn load_rooms() {
     }
     load_mine().await;
     load_known().await;
+    load_plans().await;
+}
+
+/// Les formules d'abonnement, et l'abonnement du compte connecté.
+pub async fn load_plans() {
+    if app(|a| a.plans.is_none())
+        && let Ok(plans) = request("GET", "/api/v1/plans", &[], None).await
+    {
+        app(|a| a.plans = Some(plans));
+    }
+    if let Some(account) = app(|a| a.account.clone()) {
+        let body = json!({ "secret": account.billing });
+        if let Ok(status) = request("POST", "/api/v1/billing/status", &[], Some(&body)).await {
+            let active = status["active"] == true;
+            app(|a| a.subscription = Some(status));
+            // De retour du paiement : merci, ou patience (Stripe prévient le
+            // serveur dans les secondes qui suivent).
+            if app(|a| a.paid) {
+                if active {
+                    app(|a| a.paid = false);
+                    toast(t().subscription_thanks, false);
+                } else if !app(|a| std::mem::replace(&mut a.paid_waiting, true)) {
+                    toast(t().subscription_pending, false);
+                    spawn(async {
+                        for _ in 0..10 {
+                            sleep(3000).await;
+                            if !app(|a| a.paid) {
+                                return;
+                            }
+                            load_plans().await;
+                        }
+                    });
+                }
+            }
+        }
+    }
+    ui::render_plans();
+}
+
+/// L'adresse où revenir après Stripe : l'application, dans sa langue.
+fn return_to() -> String {
+    let origin = window().location().origin().unwrap_or_default();
+    format!("{origin}{}", app_path(i18n::lang()))
+}
+
+/// S'abonner à une formule : direction le paiement Stripe.
+pub async fn subscribe(plan: &str) {
+    let Some(account) = app(|a| a.account.clone()) else {
+        return toast(t().subscribe_login, true);
+    };
+    let body = json!({
+        "secret": account.billing,
+        "plan": plan,
+        "lang": i18n::lang().code(),
+        "return_to": return_to(),
+    });
+    match request("POST", "/api/v1/billing/checkout", &[], Some(&body)).await {
+        Ok(data) => {
+            if let Some(url) = data["url"].as_str() {
+                let _ = window().location().assign(url);
+            }
+        }
+        Err(e) if e.code == "already_subscribed" => toast(t().already_subscribed, true),
+        Err(e) if e.banned() => show_banned(),
+        Err(_) => toast(t().billing_unavailable, true),
+    }
+}
+
+/// Gérer son abonnement (résilier, carte, factures) : le portail Stripe.
+pub async fn manage_subscription() {
+    let Some(account) = app(|a| a.account.clone()) else {
+        return;
+    };
+    let body = json!({ "secret": account.billing, "return_to": return_to() });
+    match request("POST", "/api/v1/billing/portal", &[], Some(&body)).await {
+        Ok(data) => {
+            if let Some(url) = data["url"].as_str() {
+                let _ = window().location().assign(url);
+            }
+        }
+        Err(_) => toast(t().billing_unavailable, true),
+    }
 }
 
 /// Les salons dont se souvient l'appareil, sur ce serveur : ceux qui sont
@@ -149,7 +231,11 @@ pub async fn create_room(name: &str, private: bool) {
     if check_text(name).is_some() {
         return toast(t().room_name_forbidden, true);
     }
-    let body = json!({ "name": name, "private": private, "tz": tz_offset() });
+    let mut body = json!({ "name": name, "private": private, "tz": tz_offset() });
+    // Abonné : ses salons durent 3 ou 7 jours.
+    if let Some(account) = app(|a| a.account.clone()) {
+        body["billing"] = json!(account.billing);
+    }
     match request("POST", "/api/v1/rooms", &[], Some(&body)).await {
         Ok(room) => {
             recent::remember(&room, &api_base(), true);
@@ -1091,6 +1177,10 @@ pub async fn start() {
     {
         app(|a| a.invited = Some(id.to_owned()));
     }
+    // De retour du paiement Stripe.
+    if hash == "#abonnement=merci" {
+        app(|a| a.paid = true);
+    }
     if !hash.is_empty() {
         let _ = window()
             .history()
@@ -1138,9 +1228,21 @@ async fn ticker() {
         }
         match room() {
             Some(room) => {
-                // À minuit chez soi, tout s'efface.
+                // À minuit chez soi, tout s'efface : l'écran d'un salon de
+                // plusieurs jours se vide, un salon qui ferme à minuit se quitte.
                 if room.borrow().day != today() {
-                    leave_room(Some(t().midnight_local));
+                    let lasts = room.borrow().expires_at > js_sys::Date::now() + 3600.0 * 1000.0;
+                    if lasts {
+                        {
+                            let mut r = room.borrow_mut();
+                            r.msgs.clear();
+                            r.day = today();
+                        }
+                        ui::render_messages(true);
+                        toast(t().midnight_screen_cleared, false);
+                    } else {
+                        leave_room(Some(t().midnight_local));
+                    }
                     continue;
                 }
                 if n.is_multiple_of(4) {

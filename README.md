@@ -144,6 +144,59 @@ pas les messages, pas la clé. Les photos font exception : il les vérifie au
 passage, en mémoire, puis les oublie. Comme tout serveur web, il voit les
 adresses IP qui se connectent.
 
+## Abonnements
+
+Deux formules, payées **chaque mois** avec Stripe ([`src/billing.rs`](src/billing.rs)),
+sans engagement et résiliables à tout moment. **Il n'existe aucune formule à
+l'année** : le prix part vers Stripe avec son rythme (`recurring[interval]=month`)
+à chaque paiement, sans prix configuré à l'avance qu'on pourrait changer, et un
+abonnement dont le rythme n'est pas mensuel n'ouvre aucun droit.
+
+| Formule | Les salons de l'abonné durent | Prix |
+|---|---|---|
+| 3 jours | jusqu'au minuit qui clôt le 3ᵉ jour | 4,99 € / mois |
+| 7 jours | jusqu'au minuit qui clôt le 7ᵉ jour | 9,99 € / mois |
+
+Aucun message n'est gardé pour autant : on revient dans le salon, pas dans son
+historique. À minuit chez soi, l'écran d'un salon de plusieurs jours se vide,
+mais on y reste.
+
+- **Qui paie** : un compte (pseudonyme + mot de passe). Le navigateur tire du
+  mot de passe un *secret d'abonnement*, envoyé dans le corps des requêtes ;
+  le serveur n'en garde que l'empreinte, qui relie l'abonnement Stripe au
+  compte. Il ne connaît ni le pseudonyme ni le mot de passe ; l'e-mail et la
+  carte restent chez Stripe (Checkout, puis le portail client pour résilier).
+- **Ce que garde la base** (`DATABASE_URL`) : les abonnements (formule,
+  statut, fin de période, identifiant client Stripe), les salons de plusieurs
+  jours (identifiant, nom, type, fin) pour qu'ils survivent aux redémarrages,
+  et la clé qui signe les salons. Rien d'autre.
+- **Les webhooks** de Stripe sont vérifiés (signature HMAC, 5 minutes au
+  plus), puis l'abonnement est relu chez Stripe : c'est Stripe qui fait foi.
+
+API : `GET /api/v1/plans`, `POST /api/v1/billing/checkout` (`{secret, plan,
+return_to}`), `POST /api/v1/billing/status`, `POST /api/v1/billing/portal`,
+`POST /api/v1/billing/webhook`.
+
+### Mettre en place les abonnements
+
+1. **Une base Postgres** (Heroku redémarre chaque serveur une fois par jour :
+   sans base, abonnements et salons longs seraient perdus) :
+   `heroku addons:create heroku-postgresql:essential-0 -a <votre-app>`.
+   Le bouton « Deploy to Heroku » l'ajoute déjà. Heroku règle `DATABASE_URL`.
+2. **Stripe → Développeurs → Clés API** : la clé secrète dans la variable
+   `STRIPE_SECRET_KEY` de l'app Heroku (*Settings → Config Vars*).
+3. **Stripe → Développeurs → Webhooks → Ajouter un endpoint** :
+   `https://<votre-app>.herokuapp.com/api/v1/billing/webhook`, événements
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, `customer.subscription.deleted`. Son
+   secret (`whsec_…`) dans `STRIPE_WEBHOOK_SECRET`.
+4. **Stripe → Paramètres → Portail client** : l'activer (résiliation,
+   moyens de paiement, factures), une fois.
+
+Sans `STRIPE_SECRET_KEY` et `STRIPE_WEBHOOK_SECRET`, l'offre n'apparaît pas.
+Essayez d'abord avec les clés de test (`sk_test_…`) et la carte
+`4242 4242 4242 4242`.
+
 ## Mettre Alley sur Heroku
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/maxlestage/Alley)
