@@ -8,7 +8,10 @@
 //!   les appels WebRTC (`call`), la vitrine (`site`).
 
 pub mod crypto;
+pub mod i18n;
 
+#[cfg(target_arch = "wasm32")]
+mod account;
 #[cfg(target_arch = "wasm32")]
 mod app;
 #[cfg(target_arch = "wasm32")]

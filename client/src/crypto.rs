@@ -125,6 +125,41 @@ pub fn open_token(key: &Key, token: &str) -> Option<String> {
     String::from_utf8(open(key, &unb64(inner)?)?).ok()
 }
 
+/// Un jeton pour des octets (une photo).
+pub fn seal_bytes_token(key: &Key, bytes: &[u8]) -> String {
+    format!("{TOKEN_V1}{}{TOKEN_END}", b64(&seal(key, bytes)))
+}
+
+/// Les octets d'un jeton.
+pub fn open_bytes_token(key: &Key, token: &str) -> Option<Vec<u8>> {
+    let inner = token.strip_prefix(TOKEN_V1)?.strip_suffix(TOKEN_END)?;
+    open(key, &unb64(inner)?)
+}
+
+/// L'empreinte d'une clé de photo, comme la calcule le serveur : la photo
+/// reçue est bien celle qu'il a vérifiée.
+pub fn key_commitment(key: &Key) -> String {
+    hex(&sha256(&[key]))
+}
+
+/// Le sel du compte : le pseudonyme, en minuscules, préfixé.
+pub fn account_salt(pseudonym: &str) -> Vec<u8> {
+    format!("alley:v1:{}", pseudonym.trim().to_lowercase()).into_bytes()
+}
+
+/// Le nombre d'itérations PBKDF2-SHA256 qui tirent la graine d'un compte de
+/// son mot de passe (le navigateur les calcule avec WebCrypto).
+pub const ACCOUNT_ITERATIONS: u32 = 310_000;
+
+/// La marque d'un compte, tirée de sa graine (PBKDF2 du mot de passe) : ce
+/// que voit le serveur pour retrouver ses salons, et rien d'autre.
+pub fn account_tag(seed: &[u8]) -> String {
+    let hk = Hkdf::<Sha256>::new(Some(b"alley-account"), seed);
+    let mut out = [0u8; 32];
+    hk.expand(b"rooms-tag", &mut out).expect("32 octets");
+    hex(&out)
+}
+
 /// Le clair d'un jeton, avec la première clé du trousseau qui l'ouvre.
 pub fn open_with_any(ring: &[Key], token: &str) -> Option<String> {
     ring.iter().find_map(|k| open_token(k, token))

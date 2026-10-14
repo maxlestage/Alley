@@ -247,7 +247,8 @@ pub fn input_value(el: &Element) -> String {
     } else if let Some(t) = el.dyn_ref::<web_sys::HtmlTextAreaElement>() {
         t.value()
     } else {
-        String::new()
+        // Une liste déroulante (`<select>`).
+        get(el, "value").as_string().unwrap_or_default()
     }
 }
 
@@ -350,12 +351,12 @@ pub async fn copy(text: &str, done: &str) {
     if ok {
         toast(done, false);
     } else {
-        let _ = window().prompt_with_message_and_default("Copiez :", text);
+        let _ = window().prompt_with_message_and_default(crate::i18n::t().copy_prompt, text);
     }
 }
 
 // ---------------------------------------------------------------------------
-// Dates, en français.
+// Dates.
 
 fn date(ts: f64) -> js_sys::Date {
     js_sys::Date::new(&JsValue::from_f64(ts))

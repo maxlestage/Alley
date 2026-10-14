@@ -8,11 +8,14 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 use web_sys::{CloseEvent, HtmlMediaElement, MessageEvent, WebSocket};
 
+use alley_moderation::{Category, check_text};
+
 use crate::call::{self, Call};
 use crate::crypto::{self, Identity};
 use crate::dom::*;
+use crate::i18n::{self, Lang, t};
 use crate::model::*;
-use crate::net::{needs_server, request, ws_base};
+use crate::net::{ApiError, needs_server, request, ws_base};
 use crate::ui;
 
 // ---------------------------------------------------------------------------
@@ -31,7 +34,46 @@ pub async fn load_rooms() {
             app(|a| a.rooms = rooms);
             ui::render_rooms();
         }
-        Err(e) => ui::lobby_error(&e.message),
+        Err(e) if e.banned() => show_banned(),
+        Err(e) => ui::lobby_error(&e.text()),
+    }
+    load_mine().await;
+}
+
+/// Les salons ouverts du compte connecté, retrouvés grâce à sa marque.
+pub async fn load_mine() {
+    let Some(account) = app(|a| a.account.clone()) else {
+        return;
+    };
+    let body = json!({ "tag": account.tag });
+    if let Ok(data) = request("POST", "/api/v1/mine", &[], Some(&body)).await {
+        let rooms = data["rooms"].as_array().cloned().unwrap_or_default();
+        app(|a| a.mine = rooms);
+        ui::render_mine();
+    }
+}
+
+/// Une erreur d'API : bloqué, ou un message.
+fn api_error(e: &ApiError) {
+    if e.banned() {
+        show_banned();
+    } else {
+        toast(e.text(), true);
+    }
+}
+
+/// L'adresse est bloquée par la modération : on quitte tout.
+pub fn show_banned() {
+    leave_room(None);
+    app(|a| a.banned = true);
+    ui::render();
+}
+
+/// Le message d'un refus de la modération.
+fn refusal(category: Category) -> &'static str {
+    match category {
+        Category::Sexual => t().refused_sexual,
+        Category::Drugs => t().refused_drugs,
     }
 }
 
@@ -42,6 +84,9 @@ fn tz_offset() -> i64 {
 
 /// Crée un salon (ou rejoint le salon public de ce nom), puis y entre.
 pub async fn create_room(name: &str, private: bool) {
+    if check_text(name).is_some() {
+        return toast(t().room_name_forbidden, true);
+    }
     let body = json!({ "name": name, "private": private, "tz": tz_offset() });
     match request("POST", "/api/v1/rooms", &[], Some(&body)).await {
         Ok(room) => {
@@ -49,7 +94,7 @@ pub async fn create_room(name: &str, private: bool) {
                 join_room(id).await;
             }
         }
-        Err(e) => toast(e.message, true),
+        Err(e) => api_error(&e),
     }
 }
 
@@ -60,24 +105,29 @@ fn today() -> (u32, u32, u32) {
 
 /// Entre dans un salon : une identité X25519 jetable, et la connexion.
 pub async fn join_room(id: &str) {
+    rejoin(id, 0).await;
+}
+
+/// Entre (ou revient) dans un salon, en comptant les tentatives : au-delà
+/// de trois, on abandonne.
+async fn rejoin(id: &str, retries: u32) {
+    if retries > 3 {
+        return leave_room(Some(t().connection_lost));
+    }
     leave_room(None);
     let info = match request("GET", &format!("/api/v1/rooms/{id}"), &[], None).await {
         Ok(info) => info,
         Err(e) => {
-            toast(
-                if e.status == 404 {
-                    "Ce salon n'existe plus : il a disparu quand tout le monde est parti, ou à minuit.".into()
-                } else {
-                    e.message
-                },
-                true,
-            );
-            return load_rooms().await;
+            api_error(&e);
+            if !e.banned() {
+                load_rooms().await;
+            }
+            return;
         }
     };
     let room = Room {
         id: id.to_owned(),
-        name: info["name"].as_str().unwrap_or("salon").to_owned(),
+        name: info["name"].as_str().unwrap_or("Alley").to_owned(),
         private: info["private"].as_bool().unwrap_or_default(),
         expires_at: info["expires_at"].as_f64().unwrap_or_default(),
         me: String::new(),
@@ -91,7 +141,7 @@ pub async fn join_room(id: &str) {
         socket: None,
         day: today(),
         leaving: false,
-        retries: 0,
+        retries,
     };
     let room: RoomRef = Rc::new(std::cell::RefCell::new(room));
     app(|a| {
@@ -140,7 +190,8 @@ fn connect(room: &RoomRef) {
         let r = room.borrow();
         (r.id.clone(), crypto::b64url(&r.identity.public_raw()))
     };
-    let Ok(ws) = WebSocket::new(&format!("{}/api/v1/rooms/{id}/live?x={x}", ws_base())) else {
+    let tag = app(|a| a.account.as_ref().map(|acc| format!("&t={}", acc.tag))).unwrap_or_default();
+    let Ok(ws) = WebSocket::new(&format!("{}/api/v1/rooms/{id}/live?x={x}{tag}", ws_base())) else {
         return;
     };
     let mut listeners = Vec::new();
@@ -185,8 +236,17 @@ async fn lost(room: &RoomRef, code: u16) {
     }
     let old = room.borrow_mut().socket.take();
     drop(old);
+    if code == 4403 {
+        return show_banned();
+    }
     if code == 4404 {
-        return leave_room(Some("Ce salon n'existe plus, ou il est complet."));
+        return leave_room(Some(t().room_gone_or_full));
+    }
+    // Refusé dès l'ouverture : peut-être bloqué.
+    if let Err(e) = request("GET", "/api/v1/stats", &[], None).await
+        && e.banned()
+    {
+        return show_banned();
     }
     let retries = {
         let mut r = room.borrow_mut();
@@ -194,7 +254,7 @@ async fn lost(room: &RoomRef, code: u16) {
         r.retries
     };
     if retries > 3 {
-        return leave_room(Some("Connexion perdue."));
+        return leave_room(Some(t().connection_lost));
     }
     sleep(1000 * retries as i32).await;
     if !is_current(room) {
@@ -202,8 +262,8 @@ async fn lost(room: &RoomRef, code: u16) {
     }
     // On revient comme un nouvel arrivant : rien n'a été gardé.
     let id = room.borrow().id.clone();
-    toast("Reconnexion…", false);
-    join_room(&id).await;
+    toast(t().reconnecting, false);
+    rejoin(&id, retries).await;
 }
 
 fn is_current(room: &RoomRef) -> bool {
@@ -258,7 +318,6 @@ fn on_event(room: &RoomRef, event: Value) {
                 let mut r = room.borrow_mut();
                 r.me = event["you"].as_str().unwrap_or_default().to_owned();
                 r.order = event["order"].as_u64().unwrap_or_default();
-                r.retries = 0;
                 if let Some(t) = event["room"]["expires_at"].as_f64() {
                     r.expires_at = t;
                 }
@@ -288,12 +347,12 @@ fn on_event(room: &RoomRef, event: Value) {
                         && room.borrow().key.is_none()
                         && is_current(&room)
                     {
-                        let id = room.borrow().id.clone();
-                        toast(
-                            "Personne n'a remis la clé du salon : nouvelle tentative…",
-                            true,
-                        );
-                        join_room(&id).await;
+                        let (id, retries) = {
+                            let r = room.borrow();
+                            (r.id.clone(), r.retries + 1)
+                        };
+                        toast(t().no_key_retry, true);
+                        rejoin(&id, retries).await;
                     }
                 });
             }
@@ -329,13 +388,16 @@ fn on_event(room: &RoomRef, event: Value) {
             let blob = event["blob"].as_str().unwrap_or_default();
             let got = {
                 let mut r = room.borrow_mut();
-                if r.key.is_some() {
+                // Seuls les trois plus anciens présents remettent la clé :
+                // un autre ne peut pas nous en imposer une à lui.
+                if r.key.is_some() || !r.may_hand_key(from) {
                     None
                 } else {
                     let x = r.peers.get(from).map(|p| p.x.clone()).unwrap_or_default();
                     match r.identity.unwrap_group_key(blob, &x) {
                         Some(key) => {
                             r.set_key(key);
+                            r.retries = 0;
                             Some(std::mem::take(&mut r.pending))
                         }
                         None => None,
@@ -344,10 +406,11 @@ fn on_event(room: &RoomRef, event: Value) {
             };
             if let Some(pending) = got {
                 hello(room, None);
-                for (from, data) in pending {
-                    on_relay(room, &from, &data);
+                for event in pending {
+                    on_relay(room, &event);
                 }
-                ui::render_room();
+                // Sans redessiner la saisie : ce qu'on tapait reste.
+                ui::key_arrived();
             }
         }
         "left" => {
@@ -358,22 +421,79 @@ fn on_event(room: &RoomRef, event: Value) {
             ui::render_call();
         }
         "relay" => {
-            let from = event["from"].as_str().unwrap_or_default().to_owned();
-            let data = event["data"].as_str().unwrap_or_default().to_owned();
             if room.borrow().key.is_none() {
-                room.borrow_mut().pending.push((from, data));
+                room.borrow_mut().pending.push(event);
             } else {
-                on_relay(room, &from, &data);
+                on_relay(room, &event);
             }
         }
-        "closed" => leave_room(Some(
-            "Minuit : le salon a disparu, et tout ce qui s'y est dit avec lui.",
-        )),
+        // Ma photo a passé la vérification du serveur.
+        "sent" => {
+            let mid = event["id"].as_str().unwrap_or_default();
+            if let Some(m) = room
+                .borrow_mut()
+                .msgs
+                .iter_mut()
+                .find(|m| m.mid == mid && m.mine)
+            {
+                m.pending = false;
+            }
+            ui::render_messages(false);
+        }
+        // Ma photo est refusée (et je suis peut-être bloqué).
+        "moderated" => {
+            let mid = event["id"].as_str().unwrap_or_default();
+            room.borrow_mut().msgs.retain(|m| !(m.mid == mid && m.mine));
+            ui::render_messages(false);
+            if event["banned"].as_bool() == Some(true) {
+                return show_banned();
+            }
+            let t = t();
+            toast(
+                match event["reason"].as_str().unwrap_or_default() {
+                    "sexual" => t.photo_refused_sexual,
+                    "drugs" => t.photo_refused_drugs,
+                    "slow_down" => t.photo_slow_down,
+                    "unavailable" => t.photo_unavailable,
+                    _ => t.photo_invalid,
+                },
+                true,
+            );
+        }
+        "closed" => match event["reason"].as_str() {
+            Some("banned") => show_banned(),
+            _ => leave_room(Some(t().midnight_closed)),
+        },
         _ => {}
     }
 }
 
-fn on_relay(room: &RoomRef, from: &str, data: &str) {
+/// Un texte reçu : masqué s'il est interdit (les messages sont chiffrés, c'est
+/// ici qu'on les filtre).
+fn screen(text: String) -> String {
+    if check_text(&text).is_some() {
+        t().hidden_message.to_owned()
+    } else {
+        text
+    }
+}
+
+/// Une photo reçue : seulement si le serveur l'a vérifiée. Sa clé (dans le
+/// message chiffré) doit avoir l'empreinte que le serveur a relayée, et
+/// ouvrir l'image qu'il a vue.
+fn verified_image(event: &Value, ik: &str) -> Option<String> {
+    let key: crypto::Key = crypto::unb64(ik)?.try_into().ok()?;
+    if crypto::key_commitment(&key) != event["kc"].as_str()? {
+        return None;
+    }
+    let jpeg = crypto::open_bytes_token(&key, event["c"].as_str()?)?;
+    jpeg.starts_with(&[0xFF, 0xD8, 0xFF])
+        .then(|| format!("data:image/jpeg;base64,{}", crypto::b64(&jpeg)))
+}
+
+fn on_relay(room: &RoomRef, event: &Value) {
+    let from = event["from"].as_str().unwrap_or_default();
+    let data = event["data"].as_str().unwrap_or_default();
     let Some(p) = room.borrow().dec(data) else {
         return;
     };
@@ -386,12 +506,17 @@ fn on_relay(room: &RoomRef, from: &str, data: &str) {
                     return;
                 };
                 let name: String = str_of("n").chars().take(32).collect();
+                let name = if check_text(&name).is_some() {
+                    String::new()
+                } else {
+                    name
+                };
                 let voice = p["voice"].as_bool().unwrap_or_default();
                 let muted = p["muted"].as_bool().unwrap_or_default();
                 let video = p["video"].as_bool().unwrap_or_default();
                 let changed = peer.voice != voice || peer.muted != muted || peer.video != video;
                 peer.name = Some(if name.trim().is_empty() {
-                    "Anonyme".into()
+                    t().anonymous.into()
                 } else {
                     name
                 });
@@ -413,7 +538,11 @@ fn on_relay(room: &RoomRef, from: &str, data: &str) {
             let x = str_of("x");
             let mime = str_of("m");
             let media = match kind.as_str() {
-                "image" => format!("data:image/jpeg;base64,{x}"),
+                // Une photo n'est montrée que si le serveur l'a vérifiée.
+                "image" => match verified_image(event, &str_of("ik")) {
+                    Some(src) => src,
+                    None => return,
+                },
                 "audio" => {
                     let ok = mime.starts_with("audio/")
                         && mime[6..]
@@ -433,12 +562,17 @@ fn on_relay(room: &RoomRef, from: &str, data: &str) {
                     from: from.to_owned(),
                     name: r.name_of(from),
                     t: now(),
-                    text: if kind == "text" { x } else { String::new() },
+                    text: if kind == "text" {
+                        screen(x)
+                    } else {
+                        String::new()
+                    },
                     kind,
                     media,
                     reply: str_of("r"),
                     edited: false,
                     mine: false,
+                    pending: false,
                 }
             };
             notify(room, &msg);
@@ -467,7 +601,7 @@ fn on_relay(room: &RoomRef, from: &str, data: &str) {
                 .iter_mut()
                 .find(|m| m.mid == mid && m.from == from)
             {
-                m.text = str_of("x");
+                m.text = screen(str_of("x"));
                 m.edited = true;
             }
             ui::render_messages(false);
@@ -498,11 +632,62 @@ fn on_relay(room: &RoomRef, from: &str, data: &str) {
     }
 }
 
-/// Envoie un message (texte, photo, vocal) à tous les présents.
+/// Envoie une photo (JPEG, en base64) : elle est chiffrée avec sa propre clé,
+/// confiée au serveur le temps qu'il la vérifie, et aux présents dans le
+/// message chiffré du salon.
+pub fn send_image(jpeg_b64: String) {
+    let Some(room) = room() else { return };
+    if room.borrow().key.is_none() {
+        return toast(t().key_not_arrived, true);
+    }
+    let Some(jpeg) = crypto::unb64(&jpeg_b64) else {
+        return toast(t().unreadable_image, true);
+    };
+    let key = crypto::generate_key();
+    let c = crypto::seal_bytes_token(&key, &jpeg);
+    let reply = app(|a| a.reply_to.take()).unwrap_or_default();
+    let mid = crypto::hex(&crypto::random_bytes::<8>());
+    let Some(data) = room.borrow().enc(&payload(
+        "msg",
+        json!({ "mid": mid, "kind": "image", "ik": crypto::b64(&key), "r": reply }),
+    )) else {
+        return;
+    };
+    send_raw(
+        &room,
+        &json!({ "type": "image", "id": mid, "key": crypto::b64(&key), "c": c, "data": data }),
+    );
+    let name = app(|a| a.name.clone());
+    {
+        let mut r = room.borrow_mut();
+        let me = r.me.clone();
+        r.msgs.push(Msg {
+            mid,
+            from: me,
+            name,
+            t: now(),
+            text: String::new(),
+            media: format!("data:image/jpeg;base64,{jpeg_b64}"),
+            kind: "image".into(),
+            reply,
+            edited: false,
+            mine: true,
+            pending: true,
+        });
+    }
+    ui::render_messages(true);
+}
+
+/// Envoie un message (texte, vocal) à tous les présents.
 pub fn send_message(kind: &str, x: String, mime: &str) {
     let Some(room) = room() else { return };
     if room.borrow().key.is_none() {
-        return toast("La clé du salon n'est pas encore arrivée.", true);
+        return toast(t().key_not_arrived, true);
+    }
+    if kind == "text"
+        && let Some(category) = check_text(&x)
+    {
+        return toast(refusal(category), true);
     }
     let reply = app(|a| a.reply_to.take()).unwrap_or_default();
     let mid = crypto::hex(&crypto::random_bytes::<8>());
@@ -529,7 +714,6 @@ pub fn send_message(kind: &str, x: String, mime: &str) {
                 String::new()
             },
             media: match kind {
-                "image" => format!("data:image/jpeg;base64,{x}"),
                 "audio" => format!("data:{mime};base64,{x}"),
                 _ => String::new(),
             },
@@ -537,6 +721,7 @@ pub fn send_message(kind: &str, x: String, mime: &str) {
             reply,
             edited: false,
             mine: true,
+            pending: false,
         });
     }
     ui::render_messages(true);
@@ -544,6 +729,9 @@ pub fn send_message(kind: &str, x: String, mime: &str) {
 
 pub fn edit_message(mid: &str, text: String) {
     let Some(room) = room() else { return };
+    if let Some(category) = check_text(&text) {
+        return toast(refusal(category), true);
+    }
     send(
         &room,
         None,
@@ -604,7 +792,7 @@ pub async fn join_call() {
     let ok = window().navigator().media_devices().is_ok()
         && js_sys::Reflect::has(&window(), &"RTCPeerConnection".into()).unwrap_or(false);
     if !ok {
-        return toast("Ce navigateur ne permet pas les appels.", true);
+        return toast(t().no_calls, true);
     }
     let ice = ice_servers().await;
     let me = room.borrow().me.clone();
@@ -620,10 +808,7 @@ pub async fn join_call() {
         ui::render_call,
     );
     if call::start(&c).await.is_err() {
-        return toast(
-            "Micro inaccessible : autorisez-le dans les réglages du navigateur.",
-            true,
-        );
+        return toast(t().mic_unavailable_call, true);
     }
     app(|a| a.call = Some(c));
     hello(&room, None);
@@ -703,8 +888,8 @@ fn notify(room: &RoomRef, msg: &Msg) {
     if web_sys::Notification::permission() == web_sys::NotificationPermission::Granted {
         let options = web_sys::NotificationOptions::new();
         options.set_body(&match msg.kind.as_str() {
-            "image" => "📷 Photo".to_owned(),
-            "audio" => "🎤 Message vocal".to_owned(),
+            "image" => t().photo_label.to_owned(),
+            "audio" => t().voice_label.to_owned(),
             _ => msg.text.chars().take(140).collect(),
         });
         options.set_tag(&room.borrow().id);
@@ -756,6 +941,7 @@ pub async fn start() {
     let base = meta("alley-base");
     retire_worker();
     app(|a| a.base = base.clone());
+    i18n::set_lang(initial_lang());
     // Un lien de salon : `#salon=<id>`, effacé aussitôt de la barre d'adresse.
     let hash = window().location().hash().unwrap_or_default();
     if let Some(id) = hash
@@ -767,7 +953,7 @@ pub async fn start() {
     if !hash.is_empty() {
         let _ = window()
             .history()
-            .map(|h| h.replace_state_with_url(&JsValue::NULL, "", Some(&format!("{base}/app/"))));
+            .map(|h| h.replace_state_with_url(&JsValue::NULL, "", Some(&app_path(i18n::lang()))));
     }
 
     listen_forever(&document(), "visibilitychange", |_| {
@@ -809,7 +995,7 @@ async fn ticker() {
             Some(room) => {
                 // À minuit chez soi, tout s'efface.
                 if room.borrow().day != today() {
-                    leave_room(Some("Minuit : tout s'efface."));
+                    leave_room(Some(t().midnight_local));
                     continue;
                 }
                 if n.is_multiple_of(4) {
@@ -819,6 +1005,59 @@ async fn ticker() {
             // Dans le hall : la liste se met à jour toute seule.
             None if n.is_multiple_of(50) && !app(|a| a.name.is_empty()) => spawn(load_rooms()),
             None => {}
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// La langue
+
+const LANG_KEY: &str = "alley.lang";
+
+fn storage() -> Option<web_sys::Storage> {
+    window().local_storage().ok().flatten()
+}
+
+/// La langue choisie un jour sur cet appareil, sinon celle de la page.
+fn initial_lang() -> Lang {
+    let page = document()
+        .document_element()
+        .and_then(|e| e.get_attribute("lang"))
+        .and_then(|l| Lang::parse(&l))
+        .unwrap_or(Lang::Fr);
+    storage()
+        .and_then(|s| s.get_item(LANG_KEY).ok().flatten())
+        .and_then(|l| Lang::parse(&l))
+        .unwrap_or(page)
+}
+
+/// L'adresse de l'application dans une langue (`/app/`, `/en/app/`…).
+pub fn app_path(lang: Lang) -> String {
+    format!("{}{}/app/", base(), lang.prefix())
+}
+
+/// Change de langue sans rien perdre : tout est redessiné.
+pub fn switch_lang(lang: Lang) {
+    i18n::set_lang(lang);
+    if let Some(s) = storage() {
+        let _ = s.set_item(LANG_KEY, lang.code());
+    }
+    if let Some(root) = document().document_element() {
+        let _ = root.set_attribute("lang", lang.code());
+    }
+    let _ = window()
+        .history()
+        .map(|h| h.replace_state_with_url(&JsValue::NULL, "", Some(&app_path(lang))));
+    // Ce qui était déjà saisi (connexion, recherche) reste saisi.
+    let fields = ["username", "password", "q"];
+    let typed: Vec<Option<String>> = fields
+        .iter()
+        .map(|f| by_id(f).map(|el| input_value(&el)))
+        .collect();
+    ui::render();
+    for (field, value) in fields.iter().zip(typed) {
+        if let (Some(el), Some(value)) = (by_id(field), value) {
+            set_input_value(&el, &value);
         }
     }
 }
