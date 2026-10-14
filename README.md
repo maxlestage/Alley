@@ -105,6 +105,43 @@ pas les messages, pas la clé. Les photos font exception : il les vérifie au
 passage, en mémoire, puis les oublie. Comme tout serveur web, il voit les
 adresses IP qui se connectent.
 
+## Mettre Alley sur Heroku
+
+[![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/maxlestage/Alley)
+
+Heroku construit l'image Docker du dépôt ([`heroku.yml`](heroku.yml),
+[`Dockerfile`](Dockerfile)) : le serveur, le navigateur en WebAssembly et les
+modèles de modération, téléchargés et vérifiés pendant la construction.
+Testé tel quel dans un conteneur limité à 512 Mo : environ 300 Mo en marche,
+modèles compris. Une dyno **Basic** suffit ; évitez Eco, qui s'endort et
+coupe les salons.
+
+**En un clic** : le bouton ci-dessus → choisissez un nom d'app et la région
+(Europe) → *Deploy app*. La première construction prend une dizaine de
+minutes. Puis, pour que la version GitHub Pages utilise ce serveur :
+*Settings → Secrets and variables → Actions → Variables* du dépôt →
+`ALLEY_API_URL` = `https://<votre-app>.herokuapp.com`, et *Actions → Pages →
+Run workflow*.
+
+**Ou automatiquement à chaque fusion dans `master`** (*Settings → Secrets and
+variables → Actions*) :
+
+1. le secret `HEROKU_API_KEY` : Heroku → *Account settings* → *API Key* →
+   *Reveal* ;
+2. la variable `HEROKU_APP_NAME` : le nom de l'app (créée si elle n'existe
+   pas) ; facultatif : `HEROKU_REGION` (`eu` par défaut, ou `us`).
+
+Le workflow [`heroku.yml`](.github/workflows/heroku.yml) (`cargo xtask
+heroku`) crée l'app, construit l'image, autorise la version GitHub Pages
+(`ALLEY_ALLOWED_ORIGINS`), puis republie Pages avec l'adresse de l'API : rien
+d'autre à régler.
+
+Sur Heroku, le serveur lit l'adresse des clients derrière le routeur
+(`X-Forwarded-For`, la dernière, que le routeur ajoute) : le blocage par IP
+vise le vrai client. Le HTTP est redirigé vers le HTTPS (HSTS), et la
+WebSocket des salons reçoit un ping toutes les 25 s (le routeur coupe une
+connexion muette au bout de 55 s).
+
 ## Déploiement
 
 Chaque push est testé ; **une branche verte est fusionnée automatiquement dans

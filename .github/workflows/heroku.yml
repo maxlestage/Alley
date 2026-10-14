@@ -6,7 +6,7 @@
 # À faire une fois (GitHub → Settings → Secrets and variables → Actions) :
 #   - secret   HEROKU_API_KEY   Heroku → Account settings → API Key → Reveal
 #   - variable HEROKU_APP_NAME  le nom de l'app (créée si elle n'existe pas)
-#   - variable HEROKU_REGION    facultative : us (défaut) ou eu
+#   - variable HEROKU_REGION    facultative : eu (défaut) ou us
 # Sans eux, le déploiement est sauté (avec un avertissement).
 #
 # L'app est réglée pour accepter la version GitHub Pages
@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-      HEROKU_REGION: ${{ vars.HEROKU_REGION || 'us' }}
+      HEROKU_REGION: ${{ vars.HEROKU_REGION || 'eu' }}
       HEROKU_APP_NAME: ${{ vars.HEROKU_APP_NAME }}
     steps:
       - uses: actions/checkout@v4
