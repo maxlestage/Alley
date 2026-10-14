@@ -96,32 +96,51 @@ const DRUGS: &[&str] = &[
     "crackhead*",
 ];
 
+/// Des mots courants qui commencent comme un mot interdit (des villes).
+const ALLOWED: &[&str] = &["pornic", "pornichet"];
+
 /// Ramène un caractère à sa lettre de base (sans accent, sans déguisement).
-fn fold(c: char) -> &'static str {
+/// Les symboles (`@`, `$`, `!`…) ne comptent comme des lettres que si
+/// `symbols` est vrai : on essaie les deux lectures.
+fn fold(c: char, symbols: bool) -> &'static str {
     match c {
-        'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' | 'ā' | '4' | '@' => "a",
+        'à' | 'á' | 'â' | 'ä' | 'ã' | 'å' | 'ā' | '4' => "a",
         'ç' | 'ć' | 'č' => "c",
-        'è' | 'é' | 'ê' | 'ë' | 'ē' | '3' | '€' => "e",
-        'ì' | 'í' | 'î' | 'ï' | '1' | '!' | '|' => "i",
+        'è' | 'é' | 'ê' | 'ë' | 'ē' | '3' => "e",
+        'ì' | 'í' | 'î' | 'ï' | '1' => "i",
         'ñ' => "n",
         'ò' | 'ó' | 'ô' | 'ö' | 'õ' | 'ø' | '0' => "o",
         'ù' | 'ú' | 'û' | 'ü' => "u",
         'ý' | 'ÿ' => "y",
-        '5' | '$' => "s",
+        '5' => "s",
         '7' => "t",
         'œ' => "oe",
         'æ' => "ae",
         'ß' => "ss",
+        '@' if symbols => "a",
+        '€' if symbols => "e",
+        '!' | '|' if symbols => "i",
+        '$' if symbols => "s",
         _ => "",
     }
 }
 
+/// Un caractère invisible glissé dans un mot (trait d'union conditionnel,
+/// espace de largeur nulle…) : ignoré.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{AD}' | '\u{200B}'..='\u{200F}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{034F}')
+}
+
 /// Les mots du texte, en forme simple.
-fn words(text: &str) -> Vec<String> {
+fn words(text: &str, symbols: bool) -> Vec<String> {
     let mut words = Vec::new();
     let mut current = String::new();
-    for c in text.chars().flat_map(char::to_lowercase) {
-        let folded = fold(c);
+    for c in text
+        .chars()
+        .filter(|c| !invisible(*c))
+        .flat_map(char::to_lowercase)
+    {
+        let folded = fold(c, symbols);
         if !folded.is_empty() {
             current.push_str(folded);
         } else if c.is_alphanumeric() {
@@ -148,6 +167,9 @@ fn squeeze(word: &str) -> String {
 }
 
 fn matches(word: &str, list: &[&str]) -> bool {
+    if ALLOWED.contains(&word) {
+        return false;
+    }
     list.iter().any(|entry| match entry.strip_suffix('*') {
         Some(stem) => word.starts_with(stem),
         None => word == *entry,
@@ -157,7 +179,13 @@ fn matches(word: &str, list: &[&str]) -> bool {
 /// Les formes à comparer : chaque mot, ses lettres répétées réduites, et les
 /// lettres isolées recollées (« p o r n », « c.o.c.a.i.n.e »).
 fn candidates(text: &str) -> Vec<String> {
-    let words = words(text);
+    let mut out = candidates_with(text, false);
+    out.extend(candidates_with(text, true));
+    out
+}
+
+fn candidates_with(text: &str, symbols: bool) -> Vec<String> {
+    let words = words(text, symbols);
     let mut out = Vec::new();
     let mut letters = String::new();
     for w in &words {
@@ -217,6 +245,11 @@ mod tests {
             "un peu de beuh ce soir",
             "fentanilo barato",
             "c0ca1ne",
+            "cannabis!",
+            "MDMA!!!",
+            "co\u{AD}caine",
+            "c\u{200B}annabis",
+            "c@nnabis",
         ] {
             assert_eq!(check_text(text), Some(Category::Drugs), "{text}");
         }
@@ -236,6 +269,9 @@ mod tests {
             "crack the code",
             "Bonne nuit 🌙",
             "x y z",
+            "Week-end à Pornic !",
+            "Pornichet, la plage",
+            "100 % d'accord !!!",
         ] {
             assert_eq!(check_text(text), None, "{text}");
         }

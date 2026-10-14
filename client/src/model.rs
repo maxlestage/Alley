@@ -116,6 +116,19 @@ impl Room {
         orders.iter().take(3).any(|o| *o == self.order)
     }
 
+    /// `from` peut-il me remettre la clé ? Seulement s'il est parmi les
+    /// trois plus anciens arrivés avant moi (ceux qui la remettent).
+    pub fn may_hand_key(&self, from: &str) -> bool {
+        let mut older: Vec<(u64, &String)> = self
+            .peers
+            .iter()
+            .filter(|(_, p)| p.order < self.order)
+            .map(|(id, p)| (p.order, id))
+            .collect();
+        older.sort_unstable();
+        older.iter().take(3).any(|(_, id)| id.as_str() == from)
+    }
+
     pub fn voice_members(&self, me_in_call: bool) -> Vec<String> {
         let mut ids: Vec<String> = Vec::new();
         if me_in_call {

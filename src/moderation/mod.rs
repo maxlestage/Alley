@@ -165,15 +165,14 @@ impl Images {
         // drawings, hentai, neutral, porn, sexy
         let (hentai, porn, sexy) = (p[1], p[3], p[4]);
 
-        // CLIP : le petit côté à 224, recadré au centre, normalisé.
+        // CLIP : le carré central, ramené à 224 × 224 (recadrer d'abord :
+        // une image très étroite ne grossit jamais), normalisé.
         let (w, h) = image.dimensions();
-        let scale = 224.0 / w.min(h) as f32;
-        let (rw, rh) = (
-            ((w as f32 * scale).round() as u32).max(224),
-            ((h as f32 * scale).round() as u32).max(224),
-        );
-        let resized = image::imageops::resize(image, rw, rh, FilterType::CatmullRom);
-        let (ox, oy) = ((rw - 224) / 2, (rh - 224) / 2);
+        let side = w.min(h);
+        let square =
+            image::imageops::crop_imm(image, (w - side) / 2, (h - side) / 2, side, side).to_image();
+        let resized = image::imageops::resize(&square, 224, 224, FilterType::CatmullRom);
+        let (ox, oy) = (0u32, 0u32);
         const MEAN: [f32; 3] = [0.481_454_66, 0.457_827_5, 0.408_210_73];
         const STD: [f32; 3] = [0.268_629_54, 0.261_302_6, 0.275_777_1];
         let input: Tensor =
@@ -241,7 +240,22 @@ pub fn decode(bytes: &[u8]) -> Option<image::RgbImage> {
     limits.max_alloc = Some(512 << 20);
     reader.limits(limits);
     let image = reader.decode().ok()?;
-    (image.width() > 0 && image.height() > 0).then(|| image.to_rgb8())
+    let (w, h) = (image.width(), image.height());
+    // Une image vide, ou plus de 20 fois plus longue que large : refusée.
+    (w > 0 && h > 0 && w.max(h) <= 20 * w.min(h)).then(|| image.to_rgb8())
+}
+
+/// Images en attente de vérification, au plus : au-delà, refusées tout de
+/// suite (la mémoire et le délai restent bornés).
+pub const MAX_WAITING: usize = 8;
+
+/// Une place dans la file de vérification, libérée en fin de vie.
+pub struct QueueSlot(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Drop for QueueSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// La modération, partagée par toutes les requêtes.
@@ -251,6 +265,8 @@ pub struct Moderation {
     /// Une image à la fois (le calcul occupe un cœur ~½ s) ; les autres
     /// attendent leur tour.
     gate: Arc<tokio::sync::Semaphore>,
+    /// Images en attente de vérification, au plus [`MAX_WAITING`].
+    waiting: Arc<std::sync::atomic::AtomicUsize>,
     bans: AutoBan,
     ban_for: Duration,
 }
@@ -272,6 +288,7 @@ impl Moderation {
         Moderation {
             images: Arc::new(OnceLock::new()),
             gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            waiting: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             bans,
             ban_for: Duration::from_secs(days * 24 * 3600),
         }
@@ -297,6 +314,18 @@ impl Moderation {
     /// Les modèles, une fois chargés.
     pub fn images(&self) -> Option<&Images> {
         self.images.get().and_then(|r| r.as_ref().ok())
+    }
+
+    /// Réserve une place dans la file de vérification ; `None` si elle est
+    /// pleine (l'image est alors refusée, à renvoyer plus tard).
+    pub fn enqueue(&self) -> Option<QueueSlot> {
+        use std::sync::atomic::Ordering;
+        let before = self.waiting.fetch_add(1, Ordering::SeqCst);
+        if before >= MAX_WAITING {
+            self.waiting.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(QueueSlot(self.waiting.clone()))
     }
 
     /// Juge une image (hors du fil de la boucle asynchrone, une à la fois).
@@ -375,6 +404,27 @@ mod tests {
             Verdict::Refused(Category::Drugs)
         );
         assert_eq!(s(0.05, 0.1, 0.1, 0.1).verdict(), Verdict::Clean);
+    }
+
+    #[test]
+    fn the_queue_is_bounded() {
+        let m = Moderation::new(AutoBan::new());
+        let slots: Vec<_> = (0..MAX_WAITING).map(|_| m.enqueue().unwrap()).collect();
+        assert!(m.enqueue().is_none());
+        drop(slots);
+        assert!(m.enqueue().is_some());
+    }
+
+    #[test]
+    fn a_thin_image_is_refused() {
+        let mut jpeg = Vec::new();
+        image::RgbImage::from_pixel(1, 400, image::Rgb([0, 0, 0]))
+            .write_to(
+                &mut std::io::Cursor::new(&mut jpeg),
+                image::ImageFormat::Jpeg,
+            )
+            .unwrap();
+        assert!(decode(&jpeg).is_none());
     }
 
     #[test]

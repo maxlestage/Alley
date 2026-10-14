@@ -312,17 +312,37 @@ impl Rooms {
         }
     }
 
-    /// Ferme les connexions des adresses bloquées.
+    /// Ferme les connexions des adresses bloquées : elles sont prévenues
+    /// (si leur file n'est pas pleine) et retirées de leur salon, ce qui
+    /// coupe leur relais même si elles ne lisent plus rien.
     pub fn kick(&self, banned: impl Fn(IpAddr) -> bool) {
         let closed = json!({ "type": "closed", "reason": "banned" }).to_string();
-        let rooms = self.rooms.lock().unwrap();
-        for room in rooms.values() {
-            for m in room.members.values() {
-                if m.ip.is_some_and(&banned) {
+        let mut rooms = self.rooms.lock().unwrap();
+        for room in rooms.values_mut() {
+            let gone: Vec<String> = room
+                .members
+                .iter()
+                .filter(|(_, m)| m.ip.is_some_and(&banned))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in gone {
+                if let Some(m) = room.members.remove(&id) {
                     let _ = m.tx.try_send(closed.clone());
                 }
+                room.broadcast(&id, &json!({ "type": "left", "id": id }).to_string());
             }
         }
+        rooms.retain(|_, r| !r.members.is_empty() || r.created.elapsed() < UNJOINED_TTL);
+    }
+
+    /// Connexions ouvertes depuis une adresse, tous salons confondus.
+    pub fn connections_from(&self, ip: IpAddr) -> usize {
+        let rooms = self.rooms.lock().unwrap();
+        rooms
+            .values()
+            .flat_map(|r| r.members.values())
+            .filter(|m| m.ip == Some(ip))
+            .count()
     }
 
     /// Remet la clé du salon (emballée pour lui seul) à un nouvel arrivant.
@@ -484,7 +504,13 @@ mod tests {
         next(&mut ada);
         rooms.kick(|ip| ip == bad);
         assert_eq!(next(&mut eve)["reason"], "banned");
-        assert!(ada.inbox.try_recv().is_err());
+        // Ève est retirée du salon : Ada la voit partir.
+        let left = next(&mut ada);
+        assert_eq!(
+            (left["type"].as_str(), left["id"].as_str()),
+            (Some("left"), Some(eve.me.as_str()))
+        );
+        assert_eq!(rooms.count(), (1, 1));
     }
 
     #[test]
