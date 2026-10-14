@@ -18,6 +18,12 @@
 //! salon la retient tant qu'il vit, pour que cette personne le retrouve
 //! ([`Rooms::mine`]), depuis n'importe quel appareil. Le serveur ne peut en
 //! déduire ni le pseudonyme ni le mot de passe.
+//!
+//! Chaque salon a un **administrateur** : son créateur. Connecté avec un
+//! compte, il le reste — revenu avec la même marque, il retrouve son rôle ;
+//! sans compte, il redevient simple membre en partant. Tant qu'il est absent,
+//! le plus ancien présent tient le rôle. L'administrateur peut exclure un
+//! membre ([`Rooms::expel`]) et supprimer n'importe quel message.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::net::IpAddr;
@@ -107,6 +113,8 @@ struct Member {
     order: u64,
     /// Son adresse, pour fermer ses connexions s'il est bloqué.
     ip: Option<IpAddr>,
+    /// Sa marque, s'il est connecté avec un compte.
+    tag: Option<String>,
 }
 
 struct Room {
@@ -120,9 +128,49 @@ struct Room {
     next_order: u64,
     /// Les marques de ceux qui y sont venus connectés.
     tags: HashSet<String>,
+    /// La marque du propriétaire (l'administrateur connecté avec un compte).
+    owner_tag: Option<String>,
+    /// La connexion qui tient le rôle d'administrateur.
+    admin: Option<String>,
+    /// Exclus jusqu'à la fin du salon : leur marque, ou leur adresse.
+    barred_tags: HashSet<String>,
+    barred_ips: HashSet<IpAddr>,
 }
 
 impl Room {
+    /// Désigne l'administrateur : le propriétaire s'il est là, sinon celui
+    /// qui tient déjà le rôle, sinon le plus ancien présent (qui devient
+    /// propriétaire si le salon n'en a pas). Renvoie `true` s'il a changé.
+    fn elect(&mut self) -> bool {
+        let owner_here = self.owner_tag.as_ref().and_then(|owner| {
+            self.members
+                .iter()
+                .filter(|(_, m)| m.tag.as_ref() == Some(owner))
+                .min_by_key(|(_, m)| m.order)
+                .map(|(id, _)| id.clone())
+        });
+        let current = self.admin.clone().filter(|a| self.members.contains_key(a));
+        let next = owner_here.or(current).or_else(|| {
+            self.members
+                .iter()
+                .min_by_key(|(_, m)| m.order)
+                .map(|(id, _)| id.clone())
+        });
+        if self.owner_tag.is_none()
+            && let Some(id) = &next
+        {
+            self.owner_tag = self.members.get(id).and_then(|m| m.tag.clone());
+        }
+        let changed = next != self.admin;
+        self.admin = next;
+        changed
+    }
+
+    fn announce_admin(&self) {
+        let event = json!({ "type": "admin", "id": self.admin }).to_string();
+        self.broadcast("", &event);
+    }
+
     fn info(&self) -> Value {
         json!({
             "id": self.id,
@@ -147,6 +195,15 @@ impl Room {
             }
         }
     }
+}
+
+/// Pourquoi une connexion n'entre pas.
+#[derive(Debug, PartialEq, Eq)]
+pub enum JoinError {
+    /// Le salon n'existe plus (ou il est complet, ou c'est minuit).
+    Gone,
+    /// Exclu par l'administrateur.
+    Barred,
 }
 
 /// Une connexion admise dans un salon.
@@ -185,6 +242,10 @@ impl Rooms {
             members: BTreeMap::new(),
             next_order: 0,
             tags: HashSet::new(),
+            owner_tag: None,
+            admin: None,
+            barred_tags: HashSet::new(),
+            barred_ips: HashSet::new(),
         };
         let info = room.info();
         rooms.insert(id, room);
@@ -230,11 +291,17 @@ impl Rooms {
         x: String,
         ip: Option<IpAddr>,
         tag: Option<&str>,
-    ) -> Option<Joined> {
+    ) -> Result<Joined, JoinError> {
         let mut rooms = self.rooms.lock().unwrap();
-        let room = rooms.get_mut(id)?;
+        let room = rooms.get_mut(id).ok_or(JoinError::Gone)?;
         if room.members.len() >= MAX_MEMBERS || room.expires_at <= now_ms() {
-            return None;
+            return Err(JoinError::Gone);
+        }
+        let tag = tag.filter(|t| is_tag(t)).map(str::to_owned);
+        if tag.as_ref().is_some_and(|t| room.barred_tags.contains(t))
+            || ip.is_some_and(|ip| room.barred_ips.contains(&ip))
+        {
+            return Err(JoinError::Barred);
         }
         let me = random_id(6);
         let (tx, inbox) = mpsc::channel(BACKLOG);
@@ -245,23 +312,40 @@ impl Rooms {
             .collect();
         let order = room.next_order;
         room.next_order += 1;
+        if let Some(tag) = &tag
+            && room.tags.len() < MAX_TAGS
+        {
+            room.tags.insert(tag.clone());
+        }
+        let joined = json!({ "type": "joined", "id": me, "x": x, "order": order }).to_string();
+        room.broadcast(&me, &joined);
+        room.members.insert(
+            me.clone(),
+            Member {
+                x,
+                tx: tx.clone(),
+                order,
+                ip,
+                tag,
+            },
+        );
+        let changed = room.elect();
         let welcome = json!({
             "type": "welcome",
             "you": me,
             "order": order,
+            "admin": room.admin,
             "room": room.info(),
             "peers": peers,
         });
         let _ = tx.try_send(welcome.to_string());
-        let joined = json!({ "type": "joined", "id": me, "x": x, "order": order }).to_string();
-        room.broadcast(&me, &joined);
-        room.members.insert(me.clone(), Member { x, tx, order, ip });
-        if let Some(tag) = tag.filter(|t| is_tag(t))
-            && room.tags.len() < MAX_TAGS
-        {
-            room.tags.insert(tag.to_owned());
+        if changed {
+            // Les autres apprennent le nouveau rôle (le nouvel arrivant le lit
+            // dans `welcome`).
+            let event = json!({ "type": "admin", "id": room.admin }).to_string();
+            room.broadcast(&me, &event);
         }
-        Some(Joined { me, inbox })
+        Ok(Joined { me, inbox })
     }
 
     /// Une connexion se ferme ; le dernier qui part emporte le salon.
@@ -277,7 +361,39 @@ impl Rooms {
             rooms.remove(id);
         } else {
             room.broadcast(me, &json!({ "type": "left", "id": me }).to_string());
+            if room.elect() {
+                room.announce_admin();
+            }
         }
+    }
+
+    /// L'administrateur exclut un membre : il est déconnecté, et ne peut plus
+    /// revenir (sa marque, ou son adresse s'il n'a pas de compte) tant que le
+    /// salon existe. Renvoie `false` si `by` n'est pas l'administrateur.
+    pub fn expel(&self, id: &str, by: &str, target: &str) -> bool {
+        let mut rooms = self.rooms.lock().unwrap();
+        let Some(room) = rooms.get_mut(id) else {
+            return false;
+        };
+        if room.admin.as_deref() != Some(by) || by == target {
+            return false;
+        }
+        let Some(member) = room.members.remove(target) else {
+            return false;
+        };
+        match (&member.tag, member.ip) {
+            (Some(tag), _) => {
+                room.barred_tags.insert(tag.clone());
+            }
+            (None, Some(ip)) => {
+                room.barred_ips.insert(ip);
+            }
+            (None, None) => {}
+        }
+        let closed = json!({ "type": "closed", "reason": "expelled" }).to_string();
+        let _ = member.tx.try_send(closed);
+        room.broadcast(target, &json!({ "type": "left", "id": target }).to_string());
+        true
     }
 
     /// Relaie un jeton chiffré (à une personne, ou à tous les autres) en
@@ -330,6 +446,9 @@ impl Rooms {
                     let _ = m.tx.try_send(closed.clone());
                 }
                 room.broadcast(&id, &json!({ "type": "left", "id": id }).to_string());
+            }
+            if !room.members.is_empty() && room.elect() {
+                room.announce_admin();
             }
         }
         rooms.retain(|_, r| !r.members.is_empty() || r.created.elapsed() < UNJOINED_TTL);
@@ -458,7 +577,7 @@ mod tests {
         // Le dernier qui part emporte le salon.
         rooms.leave(&id, &ada.me);
         assert_eq!(rooms.count(), (0, 0));
-        assert!(rooms.join(&id, "x".into(), None, None).is_none());
+        assert!(rooms.join(&id, "x".into(), None, None).is_err());
     }
 
     #[test]
@@ -480,6 +599,98 @@ mod tests {
         assert_eq!(mine[0]["id"], secret.as_str());
         assert!(rooms.mine(&"cd".repeat(32)).is_empty());
         assert!(!is_tag("pas une marque"));
+    }
+
+    /// Vide la boîte d'une connexion et renvoie le dernier administrateur
+    /// annoncé (`welcome` ou `admin`).
+    fn admin_seen(j: &mut Joined) -> Option<String> {
+        let mut admin = None;
+        while let Ok(raw) = j.inbox.try_recv() {
+            let e: Value = serde_json::from_str(&raw).unwrap();
+            if e["type"] == "welcome" || e["type"] == "admin" {
+                admin = e[if e["type"] == "welcome" {
+                    "admin"
+                } else {
+                    "id"
+                }]
+                .as_str()
+                .map(str::to_owned);
+            }
+        }
+        admin
+    }
+
+    fn room_id(rooms: &Rooms) -> String {
+        rooms.create("Club", false, 0).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    }
+
+    #[test]
+    fn an_owner_with_an_account_stays_admin() {
+        let rooms = Rooms::default();
+        let id = room_id(&rooms);
+        let ada_tag = "a".repeat(64);
+        let mut ada = rooms.join(&id, "xa".into(), None, Some(&ada_tag)).unwrap();
+        assert_eq!(admin_seen(&mut ada), Some(ada.me.clone()), "le créateur");
+        let mut bob = rooms.join(&id, "xb".into(), None, None).unwrap();
+        let mut eve = rooms.join(&id, "xe".into(), None, None).unwrap();
+        assert_eq!(admin_seen(&mut bob), Some(ada.me.clone()));
+        // Ada part : le plus ancien présent (Bob) tient le rôle.
+        rooms.leave(&id, &ada.me);
+        assert_eq!(admin_seen(&mut eve), Some(bob.me.clone()));
+        // Ada revient avec son compte : elle redevient administratrice.
+        let mut ada2 = rooms.join(&id, "xa2".into(), None, Some(&ada_tag)).unwrap();
+        assert_eq!(admin_seen(&mut ada2), Some(ada2.me.clone()));
+        assert_eq!(admin_seen(&mut bob), Some(ada2.me.clone()));
+    }
+
+    #[test]
+    fn an_owner_without_an_account_comes_back_as_a_member() {
+        let rooms = Rooms::default();
+        let id = room_id(&rooms);
+        let ada = rooms.join(&id, "xa".into(), None, None).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, None).unwrap();
+        rooms.leave(&id, &ada.me);
+        assert_eq!(admin_seen(&mut bob), Some(bob.me.clone()), "le plus ancien");
+        let mut ada2 = rooms.join(&id, "xa2".into(), None, None).unwrap();
+        assert_eq!(
+            admin_seen(&mut ada2),
+            Some(bob.me.clone()),
+            "Ada est membre"
+        );
+    }
+
+    #[test]
+    fn the_admin_expels_and_the_expelled_cannot_return() {
+        let rooms = Rooms::default();
+        let id = room_id(&rooms);
+        let ip: IpAddr = "198.51.100.9".parse().unwrap();
+        let ada = rooms
+            .join(&id, "xa".into(), None, Some(&"a".repeat(64)))
+            .unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), Some(ip), None).unwrap();
+        let eve_tag = "e".repeat(64);
+        let eve = rooms.join(&id, "xe".into(), None, Some(&eve_tag)).unwrap();
+        // Seul l'administrateur exclut.
+        assert!(!rooms.expel(&id, &bob.me, &eve.me));
+        assert!(rooms.expel(&id, &ada.me, &bob.me));
+        let mut last = Value::Null;
+        while let Ok(raw) = bob.inbox.try_recv() {
+            last = serde_json::from_str(&raw).unwrap();
+        }
+        assert_eq!(last["reason"], "expelled");
+        assert_eq!(
+            rooms.join(&id, "xb2".into(), Some(ip), None).err(),
+            Some(JoinError::Barred)
+        );
+        assert!(rooms.expel(&id, &ada.me, &eve.me));
+        assert_eq!(
+            rooms.join(&id, "xe2".into(), None, Some(&eve_tag)).err(),
+            Some(JoinError::Barred)
+        );
+        assert_eq!(rooms.count(), (1, 1));
     }
 
     #[test]
