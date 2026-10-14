@@ -40,7 +40,7 @@
       "required": false
     },
     "STRIPE_SECRET_KEY": {
-      "description": "Abonnements (facultatif) : la clé secrète Stripe (sk_live_… ou sk_test_…). Sans elle, l'offre n'est pas proposée.",
+      "description": "Périodes payantes (facultatif) : la clé secrète Stripe (sk_live_… ou sk_test_…). Sans elle, l'offre n'est pas proposée.",
       "required": false
     },
     "ALLEY_SIGNING_KEY": {

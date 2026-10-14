@@ -1,6 +1,7 @@
-//! Les abonnements, de bout en bout, contre un faux Stripe — sans base de
-//! données : Stripe fait foi, le navigateur garde son abonnement et les
-//! descriptions signées des salons, qui rouvrent après un redémarrage.
+//! Les périodes payantes, de bout en bout, contre un faux Stripe : un
+//! paiement unique (rien de mensuel, rien d'annuel), relu chez Stripe ; le
+//! navigateur garde son paiement et les descriptions signées des salons, qui
+//! rouvrent après un redémarrage sans base.
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -9,16 +10,23 @@ use std::time::Duration;
 use paquets::prelude::*;
 use paquets::serde_json::{Value, json};
 
-/// Un abonnement du faux Stripe : compte, formule, rythme, statut.
-type Sub = (String, String, String, String);
+/// Un paiement du faux Stripe.
+#[derive(Clone)]
+struct Payment {
+    billing: String,
+    plan: String,
+    tz: String,
+    amount: u64,
+    status: String,
+    refunded: bool,
+}
 
 #[derive(Default)]
 struct Fake {
     /// Le dernier formulaire de Checkout.
     checkout: HashMap<String, String>,
     auth: String,
-    subs: HashMap<String, Sub>,
-    portal_customer: String,
+    payments: HashMap<String, Payment>,
 }
 
 static STRIPE: LazyLock<Mutex<Fake>> = LazyLock::new(Default::default);
@@ -50,12 +58,13 @@ fn form(body: &str) -> HashMap<String, String> {
         .collect()
 }
 
-fn subscription_json(id: &str, s: &Sub) -> Value {
+fn payment_json(id: &str, p: &Payment) -> Value {
     json!({
-        "id": id, "customer": "cus_test", "status": s.3,
-        "metadata": { "alley_billing": s.0, "alley_plan": s.1 },
-        "items": { "data": [{ "current_period_end": 4_102_444_800i64,
-            "price": { "recurring": { "interval": s.2, "interval_count": 1 } } }] }
+        "id": id, "status": p.status, "currency": "eur",
+        "created": alley::rooms::now_ms() / 1000,
+        "amount_received": if p.status == "succeeded" { p.amount } else { 0 },
+        "metadata": { "alley_billing": p.billing, "alley_plan": p.plan, "alley_tz": p.tz },
+        "latest_charge": { "refunded": p.refunded, "amount_refunded": if p.refunded { p.amount } else { 0 } }
     })
 }
 
@@ -63,15 +72,17 @@ async fn fake_checkout(req: Request) -> Json<Value> {
     let f = form(&req.text().await.unwrap());
     let mut fake = STRIPE.lock().unwrap();
     fake.auth = req.header("authorization").unwrap_or_default().to_owned();
-    // Un abonnement en attente de paiement.
-    let id = format!("sub_{}", fake.subs.len() + 1);
-    let sub = (
-        f["subscription_data[metadata][alley_billing]"].clone(),
-        f["subscription_data[metadata][alley_plan]"].clone(),
-        f["line_items[0][price_data][recurring][interval]"].clone(),
-        "incomplete".to_owned(),
-    );
-    fake.subs.insert(id.clone(), sub);
+    // Un paiement en attente.
+    let id = format!("pi_{}", fake.payments.len() + 1);
+    let payment = Payment {
+        billing: f["payment_intent_data[metadata][alley_billing]"].clone(),
+        plan: f["payment_intent_data[metadata][alley_plan]"].clone(),
+        tz: f["payment_intent_data[metadata][alley_tz]"].clone(),
+        amount: f["line_items[0][price_data][unit_amount]"].parse().unwrap(),
+        status: "requires_payment_method".into(),
+        refunded: false,
+    };
+    fake.payments.insert(id.clone(), payment);
     fake.checkout = f;
     Json(
         json!({ "id": format!("cs_{id}"), "url": format!("https://checkout.stripe.test/cs_{id}") }),
@@ -81,11 +92,15 @@ async fn fake_checkout(req: Request) -> Json<Value> {
 async fn fake_session(req: Request) -> (u16, Json<Value>) {
     let id = req.param("id").unwrap_or_default().to_owned();
     let fake = STRIPE.lock().unwrap();
-    let sub = id.trim_start_matches("cs_");
-    match fake.subs.get(sub) {
-        Some(s) => (
+    let pi = id.trim_start_matches("cs_");
+    match fake.payments.get(pi) {
+        Some(p) => (
             200,
-            Json(json!({ "id": id, "subscription": sub, "metadata": { "alley_billing": s.0 } })),
+            Json(json!({
+                "id": id, "payment_intent": pi,
+                "payment_status": if p.status == "succeeded" { "paid" } else { "unpaid" },
+                "metadata": { "alley_billing": p.billing }
+            })),
         ),
         None => (
             404,
@@ -94,7 +109,7 @@ async fn fake_session(req: Request) -> (u16, Json<Value>) {
     }
 }
 
-async fn fake_subscription(req: Request) -> (u16, Json<Value>) {
+async fn fake_payment(req: Request) -> (u16, Json<Value>) {
     let id = req.param("id").unwrap_or_default().to_owned();
     let fake = STRIPE.lock().unwrap();
     if id == "search" {
@@ -103,36 +118,24 @@ async fn fake_subscription(req: Request) -> (u16, Json<Value>) {
             .map(|q| q.into_owned())
             .unwrap_or_default();
         let data: Vec<Value> = fake
-            .subs
+            .payments
             .iter()
-            .filter(|(_, s)| query.contains(&s.0))
-            .map(|(id, s)| subscription_json(id, s))
+            .filter(|(_, p)| query.contains(&p.billing) && p.status == "succeeded")
+            .map(|(id, p)| payment_json(id, p))
             .collect();
         return (200, Json(json!({ "data": data })));
     }
-    match fake.subs.get(&id) {
-        Some(s) => (200, Json(subscription_json(&id, s))),
+    match fake.payments.get(&id) {
+        Some(p) => (200, Json(payment_json(&id, p))),
         None => (
             404,
-            Json(json!({ "error": { "message": "No such subscription" } })),
+            Json(json!({ "error": { "message": "No such payment_intent" } })),
         ),
     }
 }
 
-async fn fake_portal(req: Request) -> Json<Value> {
-    let f = form(&req.text().await.unwrap());
-    STRIPE.lock().unwrap().portal_customer = f["customer"].clone();
-    Json(json!({ "url": "https://billing.stripe.test/session" }))
-}
-
-fn set_status(sub: &str, status: &str) {
-    STRIPE.lock().unwrap().subs.get_mut(sub).unwrap().3 = status.into();
-}
-
-fn add_sub(id: &str, secret: &str, plan: &str, interval: &str) {
-    let billing = alley::billing::billing_id(secret).unwrap();
-    let sub = (billing, plan.into(), interval.into(), "active".into());
-    STRIPE.lock().unwrap().subs.insert(id.into(), sub);
+fn pay(id: &str) {
+    STRIPE.lock().unwrap().payments.get_mut(id).unwrap().status = "succeeded".into();
 }
 
 async fn fake_stripe() -> u16 {
@@ -147,8 +150,7 @@ async fn fake_stripe() -> u16 {
     app.port(port);
     app.post("/v1/checkout/sessions", fake_checkout);
     app.get("/v1/checkout/sessions/:id", fake_session);
-    app.get("/v1/subscriptions/:id", fake_subscription);
-    app.post("/v1/billing_portal/sessions", fake_portal);
+    app.get("/v1/payment_intents/:id", fake_payment);
     tokio::spawn(app.serve());
     for _ in 0..50 {
         if tokio::net::TcpStream::connect(("127.0.0.1", port))
@@ -180,7 +182,7 @@ fn left(room: &Value) -> i64 {
 }
 
 #[tokio::test]
-async fn monthly_subscriptions_without_a_database() {
+async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
     let stripe = fake_stripe().await;
     // SAFETY : ce fichier de tests ne contient que ce test, rien ne lit
     // l'environnement en même temps.
@@ -188,8 +190,7 @@ async fn monthly_subscriptions_without_a_database() {
         std::env::set_var("STRIPE_SECRET_KEY", "sk_test_123");
         std::env::set_var("STRIPE_API_BASE", format!("http://127.0.0.1:{stripe}"));
     }
-    // Sans clé de signature durable, l'offre n'est pas proposée : un salon
-    // de plusieurs jours ne rouvrirait pas après un redémarrage.
+    // Sans clé de signature durable, l'offre n'est pas proposée.
     let no_key = alley_with("memory").await;
     let plans: Value = no_key.get("/api/v1/plans").await.json();
     assert_eq!(plans["enabled"], false);
@@ -198,12 +199,12 @@ async fn monthly_subscriptions_without_a_database() {
     unsafe { std::env::set_var("ALLEY_SIGNING_KEY", &key) };
     let client = alley_with("memory").await;
 
-    // Les formules : au mois, et seulement au mois.
+    // Les périodes : payées une fois.
     let plans: Value = client.get("/api/v1/plans").await.json();
     assert_eq!(plans["enabled"], true);
     assert_eq!(
-        (plans["currency"].as_str(), plans["interval"].as_str()),
-        (Some("eur"), Some("month"))
+        (plans["currency"].as_str(), plans["mode"].as_str()),
+        (Some("eur"), Some("payment"))
     );
     assert_eq!(
         plans["plans"][0],
@@ -216,84 +217,95 @@ async fn monthly_subscriptions_without_a_database() {
 
     let secret = "5e".repeat(32);
     let back = "https://maxlestage.github.io/Alley/app/";
-    let checkout = |plan: &str, back: &str| json!({ "secret": secret, "plan": plan, "lang": "fr", "return_to": back });
+    let checkout = |plan: &str, back: &str| json!({ "secret": secret, "plan": plan, "lang": "fr", "tz": 120, "return_to": back });
     let evil = checkout("3d", "https://evil.example/");
     assert_eq!(post(&client, "/api/v1/billing/checkout", evil).await.0, 400);
-    let yearly = checkout("1y", back);
+    let monthly = checkout("1m", back);
     assert_eq!(
-        post(&client, "/api/v1/billing/checkout", yearly).await.0,
+        post(&client, "/api/v1/billing/checkout", monthly).await.0,
         400
     );
     let (status, body) = post(&client, "/api/v1/billing/checkout", checkout("3d", back)).await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["url"], "https://checkout.stripe.test/cs_sub_1");
+    assert_eq!(body["url"], "https://checkout.stripe.test/cs_pi_1");
     {
         let fake = STRIPE.lock().unwrap();
         let f = &fake.checkout;
         assert_eq!(fake.auth, "Bearer sk_test_123");
-        assert_eq!(f["mode"], "subscription");
-        assert_eq!(f["line_items[0][price_data][recurring][interval]"], "month");
-        assert_eq!(
-            f["line_items[0][price_data][recurring][interval_count]"],
-            "1"
+        // Un paiement unique : ni abonnement, ni rythme.
+        assert_eq!(f["mode"], "payment");
+        assert!(
+            !f.keys()
+                .any(|k| k.contains("recurring") || k.contains("subscription"))
         );
         assert_eq!(f["line_items[0][price_data][unit_amount]"], "499");
         assert_eq!(f["line_items[0][price_data][currency]"], "eur");
+        assert_eq!(f["payment_intent_data[metadata][alley_tz]"], "120");
         assert_eq!(
             f["success_url"],
-            format!("{back}#abonnement={{CHECKOUT_SESSION_ID}}")
+            format!("{back}#periode={{CHECKOUT_SESSION_ID}}")
         );
         // Stripe ne reçoit que l'empreinte du secret.
         assert!(!f.values().any(|v| v.contains(&secret)));
     }
 
-    // Pas encore payé : un salon ordinaire.
-    let create = |name: &str, sub: Option<&str>| json!({ "name": name, "private": true, "tz": 120, "billing": secret, "subscription": sub });
+    // Pas encore payé : un salon ordinaire, et la session ne donne rien.
+    let create = |name: &str, payment: Option<&str>| json!({ "name": name, "private": true, "tz": 120, "billing": secret, "payment": payment });
     let (_, room) = post(&client, "/api/v1/rooms", create("Avant", None)).await;
     assert!(left(&room) <= DAY);
-
-    // Payé ; de retour de Checkout, la session mène à l'abonnement.
-    set_status("sub_1", "active");
     let (_, status) = post(
         &client,
         "/api/v1/billing/status",
-        json!({ "secret": secret, "session": "cs_sub_1" }),
+        json!({ "secret": secret, "session": "cs_pi_1" }),
+    )
+    .await;
+    assert_eq!(status["active"], false);
+
+    // Payé ; de retour de Checkout, la session mène au paiement.
+    pay("pi_1");
+    let (_, status) = post(
+        &client,
+        "/api/v1/billing/status",
+        json!({ "secret": secret, "session": "cs_pi_1" }),
     )
     .await;
     assert_eq!(
         (
             status["active"].as_bool(),
             status["days"].as_u64(),
-            status["subscription"].as_str()
+            status["payment"].as_str()
         ),
-        (Some(true), Some(3), Some("sub_1")),
+        (Some(true), Some(3), Some("pi_1")),
         "{status}"
     );
+    let until = status["until"].as_i64().unwrap();
+    let period = until - alley::rooms::now_ms();
+    assert!(period > 2 * DAY && period <= 3 * DAY, "{period}");
     // La session payée par un autre compte ne donne rien.
     let (_, other) = post(
         &client,
         "/api/v1/billing/status",
-        json!({ "secret": "6f".repeat(32), "session": "cs_sub_1" }),
+        json!({ "secret": "6f".repeat(32), "session": "cs_pi_1" }),
     )
     .await;
     assert_eq!(other["active"], false);
 
-    // Abonné : ses salons durent 3 jours.
+    // Pendant la période, ses salons restent ouverts jusqu'à sa fin.
     let (_, room) = post(
         &client,
         "/api/v1/rooms",
-        create("Trois jours", Some("sub_1")),
+        create("Trois jours", Some("pi_1")),
     )
     .await;
-    assert!(left(&room) > 2 * DAY && left(&room) <= 3 * DAY);
-    // Un autre appareil, qui ne connaît pas l'abonnement : Stripe le retrouve.
+    assert_eq!(room["expires_at"].as_i64(), Some(until));
+    // Un autre appareil, qui ne connaît pas le paiement : Stripe le retrouve.
     let (_, room2) = post(&client, "/api/v1/rooms", create("Autre appareil", None)).await;
-    assert!(left(&room2) > 2 * DAY);
-    // L'abonnement d'un autre ne compte pas.
-    let stolen = json!({ "name": "Volé", "billing": "6f".repeat(32), "subscription": "sub_1" });
+    assert_eq!(room2["expires_at"].as_i64(), Some(until));
+    // Le paiement d'un autre ne compte pas.
+    let stolen = json!({ "name": "Volé", "billing": "6f".repeat(32), "payment": "pi_1" });
     let (_, stolen) = post(&client, "/api/v1/rooms", stolen).await;
     assert!(left(&stolen) <= DAY);
-    // Déjà abonné : pas de second paiement.
+    // Une période en cours : pas de second paiement.
     let again = checkout("7d", back);
     assert_eq!(
         post(&client, "/api/v1/billing/checkout", again).await.0,
@@ -316,9 +328,6 @@ async fn monthly_subscriptions_without_a_database() {
     let (_, known) = post(&client, "/api/v1/known", signed("Trois jours")).await;
     assert_eq!(known["rooms"][0]["name"], "Trois jours");
     assert_eq!(known["rooms"][0]["sig"], room["sig"]);
-    let back_again = client.get(&format!("/api/v1/rooms/{id}")).await;
-    assert_eq!(back_again.status(), 200);
-
     // Une autre clé de signature : rien ne rouvre.
     unsafe { std::env::set_var("ALLEY_SIGNING_KEY", "77".repeat(32)) };
     let other_key = alley_with("memory").await;
@@ -326,50 +335,49 @@ async fn monthly_subscriptions_without_a_database() {
     assert!(known["rooms"].as_array().unwrap().is_empty());
     unsafe { std::env::set_var("ALLEY_SIGNING_KEY", &key) };
 
-    // Le portail de Stripe ; une résiliation se voit au retour.
-    let (_, portal) = post(
-        &client,
-        "/api/v1/billing/portal",
-        json!({ "secret": secret, "subscription": "sub_1", "return_to": back }),
-    )
-    .await;
-    assert_eq!(portal["url"], "https://billing.stripe.test/session");
-    assert_eq!(STRIPE.lock().unwrap().portal_customer, "cus_test");
-    set_status("sub_1", "canceled");
+    // Remboursé : la période n'ouvre plus de droits.
+    STRIPE
+        .lock()
+        .unwrap()
+        .payments
+        .get_mut("pi_1")
+        .unwrap()
+        .refunded = true;
+    let fresh = alley_with("memory").await;
     let (_, status) = post(
-        &client,
+        &fresh,
         "/api/v1/billing/status",
-        json!({ "secret": secret, "subscription": "sub_1" }),
-    )
-    .await;
-    assert_eq!(
-        (status["active"].as_bool(), status["days"].as_u64()),
-        (Some(false), Some(1))
-    );
-
-    // Un abonnement à l'année n'ouvre aucun droit.
-    let year = "7a".repeat(32);
-    add_sub("sub_year", &year, "7d", "year");
-    let (_, status) = post(
-        &client,
-        "/api/v1/billing/status",
-        json!({ "secret": year, "subscription": "sub_year" }),
+        json!({ "secret": secret, "payment": "pi_1" }),
     )
     .await;
     assert_eq!(
         (status["active"].as_bool(), status["status"].as_str()),
-        (Some(false), Some("not_monthly"))
+        (Some(false), Some("refunded"))
     );
+    let (_, after) = post(&fresh, "/api/v1/rooms", create("Après", Some("pi_1"))).await;
+    assert!(left(&after) <= DAY);
 
-    // Avec SQLite (un hébergeur au disque durable), les salons de plusieurs
-    // jours rouvrent d'eux-mêmes au démarrage.
+    // Avec SQLite, les salons de plusieurs jours rouvrent d'eux-mêmes.
     let dir = std::env::temp_dir().join(format!("alley-billing-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let db = format!("sqlite://{}", dir.join("alley.db").display());
     let sqlite = alley_with(&db).await;
     let secret7 = "8c".repeat(32);
-    add_sub("sub_7", &secret7, "7d", "month");
-    let week = json!({ "name": "Semaine", "billing": secret7, "subscription": "sub_7" });
+    let (_, body) = post(
+        &sqlite,
+        "/api/v1/billing/checkout",
+        json!({ "secret": secret7, "plan": "7d", "tz": 0, "return_to": back }),
+    )
+    .await;
+    let pi = body["url"]
+        .as_str()
+        .unwrap()
+        .rsplit("cs_")
+        .next()
+        .unwrap()
+        .to_owned();
+    pay(&pi);
+    let week = json!({ "name": "Semaine", "billing": secret7, "payment": pi });
     let (_, week) = post(&sqlite, "/api/v1/rooms", week).await;
     assert!(left(&week) > 6 * DAY && left(&week) <= 7 * DAY);
     let restarted = alley_with(&db).await;
