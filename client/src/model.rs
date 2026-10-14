@@ -211,6 +211,8 @@ pub struct App {
     pub mine: Vec<Value>,
     /// Les salons dont se souvient l'appareil, encore ouverts sur ce serveur.
     pub known: Vec<Value>,
+    /// La clé publique de chaque serveur, qui vérifie ce qu'il dit des salons.
+    pub server_keys: std::collections::HashMap<String, String>,
     /// Bloqué par la modération : plus rien n'est possible.
     pub banned: bool,
     /// Une adresse de serveur saisie à la main (retenue par l'appareil).

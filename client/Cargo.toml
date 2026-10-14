@@ -17,6 +17,8 @@ aes-gcm = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 # Les signatures : tout ce qu'envoie un membre est signé de sa clé Ed25519.
 ed25519-dalek = "2"
+# La signature du compte sur ce que garde l'appareil (clé tirée du mot de passe).
+hmac = "0.12"
 hkdf = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
@@ -56,6 +58,14 @@ web-sys = { version = "0.3", features = [
   "FileReader",
   "Headers",
   "History",
+  "IdbTransactionMode",
+  "IdbTransaction",
+  "IdbRequest",
+  "IdbOpenDbRequest",
+  "IdbObjectStore",
+  "IdbFactory",
+  "IdbDatabase",
+  "HmacKeyGenParams",
   "HtmlAnchorElement",
   "HtmlAudioElement",
   "HtmlButtonElement",

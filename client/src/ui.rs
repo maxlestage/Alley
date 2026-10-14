@@ -196,6 +196,7 @@ fn welcome() -> El {
                             a.name = name;
                             a.account = None;
                         });
+                        crate::vault::set_account(None);
                         spawn(app::enter());
                     }),
             )
@@ -223,13 +224,18 @@ fn welcome() -> El {
                 let _ = button.set_attribute("disabled", "");
                 button.set_text_content(Some(t.logging_in));
                 spawn(async move {
-                    match crate::account::tag(&name, &password).await {
-                        Ok(tag) => {
+                    match crate::account::sign_in(&name, &password).await {
+                        Ok((tag, signer)) => {
                             crate::account::offer_to_save(&name, &password);
                             app(|a| {
                                 a.name = name;
                                 a.account = Some(Account { tag });
                             });
+                            // Ce que garde l'appareil est relu : la signature
+                            // de ce compte est vérifiée aussi.
+                            crate::vault::set_account(Some(signer));
+                            recent::load().await;
+                            app::warn_if_tampered();
                             app::enter().await;
                         }
                         Err(_) => {
@@ -339,6 +345,7 @@ fn lobby() -> El {
                                 a.account = None;
                                 a.mine.clear();
                             });
+                            crate::vault::set_account(None);
                             render();
                         }),
                 ),

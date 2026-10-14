@@ -8,6 +8,7 @@
 //! | `POST /mine` | les salons ouverts d'une marque (`{tag}`, compte connecté) |
 //! | `POST /known` | parmi des salons (`{ids}`, ceux dont se souvient l'appareil), les ouverts |
 //! | `GET /rooms/:id/live?x=&s=&t=` | le salon en direct (WebSocket) |
+//! | `GET /key` | la clé publique Ed25519 qui vérifie ce que le serveur dit des salons |
 //! | `GET /ice` | les serveurs STUN/TURN des appels |
 //! | `GET /stats` | ce que voit le serveur : des nombres |
 //!
@@ -140,6 +141,11 @@ async fn show(req: Request) -> (u16, Json<Value>) {
         Some(room) => (200, Json(room)),
         None => fail(404, "room_gone"),
     }
+}
+
+/// `GET /api/v1/key` : la clé qui vérifie la signature des salons (`sig`).
+async fn key(req: Request) -> Json<Value> {
+    Json(json!({ "alg": "Ed25519", "key": req.state::<Rooms>().public_key() }))
 }
 
 /// `GET /api/v1/stats` : ce que le serveur voit.
@@ -422,6 +428,7 @@ pub fn routes(app: &mut App) {
     app.post("/api/v1/known", known);
     app.get("/api/v1/rooms/:id", show);
     app.ws("/api/v1/rooms/:id/live", live);
+    app.get("/api/v1/key", key);
     app.get("/api/v1/ice", ice);
     app.get("/api/v1/stats", stats);
 }

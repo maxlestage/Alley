@@ -34,7 +34,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::protocol::random_id;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+use ed25519_dalek::{Signer, SigningKey};
+
+use crate::protocol::{random_id, room_statement};
 
 /// Personnes dans un salon, au plus (les appels vont de pair à pair).
 pub const MAX_MEMBERS: usize = 64;
@@ -184,13 +188,17 @@ impl Room {
         self.broadcast("", &event);
     }
 
-    fn info(&self) -> Value {
+    /// Ce qu'on dit d'un salon, signé par le serveur ([`room_statement`]) :
+    /// l'appareil qui le retient vérifie que personne ne l'a modifié depuis.
+    fn info(&self, key: &SigningKey) -> Value {
+        let statement = room_statement(&self.id, &self.name, self.private, self.expires_at);
         json!({
             "id": self.id,
             "name": self.name,
             "private": self.private,
             "members": self.members.len(),
             "expires_at": self.expires_at,
+            "sig": STANDARD.encode(key.sign(&statement).to_bytes()),
         })
     }
 
@@ -225,9 +233,22 @@ pub struct Joined {
     pub inbox: mpsc::Receiver<String>,
 }
 
-#[derive(Default)]
 pub struct Rooms {
     rooms: Mutex<HashMap<String, Room>>,
+    /// La clé qui signe ce que le serveur dit des salons, tirée au démarrage
+    /// (les salons, en mémoire, ne survivent pas à un redémarrage non plus).
+    key: SigningKey,
+}
+
+impl Default for Rooms {
+    fn default() -> Self {
+        let mut seed = [0u8; 32];
+        getrandom::getrandom(&mut seed).expect("générateur aléatoire du système");
+        Rooms {
+            rooms: Mutex::default(),
+            key: SigningKey::from_bytes(&seed),
+        }
+    }
 }
 
 impl Rooms {
@@ -238,7 +259,7 @@ impl Rooms {
         let key = normalize(&name);
         let mut rooms = self.rooms.lock().unwrap();
         if !private && let Some(room) = rooms.values().find(|r| !r.private && r.key == key) {
-            return Some(room.info());
+            return Some(room.info(&self.key));
         }
         if rooms.len() >= MAX_ROOMS {
             // La place manque : le salon vide depuis le plus longtemps la cède.
@@ -266,7 +287,7 @@ impl Rooms {
             barred_tags: HashSet::new(),
             barred_ips: HashSet::new(),
         };
-        let info = room.info();
+        let info = room.info(&self.key);
         rooms.insert(id, room);
         Some(info)
     }
@@ -286,11 +307,24 @@ impl Rooms {
                 .cmp(&a.members.len())
                 .then_with(|| a.name.cmp(&b.name))
         });
-        found.into_iter().take(100).map(Room::info).collect()
+        found
+            .into_iter()
+            .take(100)
+            .map(|r| r.info(&self.key))
+            .collect()
+    }
+
+    /// La clé publique qui vérifie ce que le serveur dit des salons (base64).
+    pub fn public_key(&self) -> String {
+        STANDARD.encode(self.key.verifying_key().to_bytes())
     }
 
     pub fn info(&self, id: &str) -> Option<Value> {
-        self.rooms.lock().unwrap().get(id).map(Room::info)
+        self.rooms
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|r| r.info(&self.key))
     }
 
     /// Parmi ces identifiants (les salons dont se souvient un appareil), ceux
@@ -299,7 +333,7 @@ impl Rooms {
         let rooms = self.rooms.lock().unwrap();
         ids.iter()
             .take(MAX_KNOWN)
-            .filter_map(|id| rooms.get(id).map(Room::info))
+            .filter_map(|id| rooms.get(id).map(|r| r.info(&self.key)))
             .collect()
     }
 
@@ -309,7 +343,11 @@ impl Rooms {
         let rooms = self.rooms.lock().unwrap();
         let mut found: Vec<&Room> = rooms.values().filter(|r| r.tags.contains(tag)).collect();
         found.sort_by(|a, b| a.name.cmp(&b.name));
-        found.into_iter().take(100).map(Room::info).collect()
+        found
+            .into_iter()
+            .take(100)
+            .map(|r| r.info(&self.key))
+            .collect()
     }
 
     /// Entre dans un salon : la connexion reçoit d'abord `welcome` (qui elle
@@ -368,7 +406,7 @@ impl Rooms {
             "you": me,
             "order": order,
             "admin": room.admin,
-            "room": room.info(),
+            "room": room.info(&self.key),
             "peers": peers,
         });
         let _ = tx.try_send(welcome.to_string());
