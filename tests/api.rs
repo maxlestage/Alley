@@ -128,8 +128,14 @@ async fn connect_with(port: u16, room: &str, identity: &Identity, extra: &str) -
 }
 
 async fn next(ws: &mut Ws) -> Value {
+    next_within(ws, 5).await
+}
+
+/// Comme [`next`], en attendant plus longtemps : vérifier une image peut
+/// d'abord attendre le chargement des modèles (machine chargée, CI).
+async fn next_within(ws: &mut Ws, seconds: u64) -> Value {
     loop {
-        let msg = tokio::time::timeout(Duration::from_secs(5), ws.next())
+        let msg = tokio::time::timeout(Duration::from_secs(seconds), ws.next())
             .await
             .expect("un événement à temps")
             .expect("connexion ouverte")
@@ -338,7 +344,7 @@ async fn an_image_is_checked_and_a_forbidden_one_blocks_the_address() {
     // Une image ordinaire passe : Bob la reçoit avec l'empreinte de sa clé.
     let ordinary = std::fs::read("tests/fixtures/ordinary.jpg").unwrap();
     send(&mut ada, image(&ordinary, "m1")).await;
-    let got = next(&mut bob).await;
+    let got = next_within(&mut bob, 60).await;
     assert_eq!(got["type"], "relay");
     let payload = crypto::open_token(&room_key, got["data"].as_str().unwrap()).unwrap();
     let payload: Value = paquets::serde_json::from_str(&payload).unwrap();
@@ -356,7 +362,7 @@ async fn an_image_is_checked_and_a_forbidden_one_blocks_the_address() {
     // Ce qui n'est pas une image JPEG est refusé, sans plus.
     tokio::time::sleep(Duration::from_millis(2100)).await;
     send(&mut ada, image(b"GIF89a pas une photo", "m2")).await;
-    let refused = next(&mut ada).await;
+    let refused = next_within(&mut ada, 60).await;
     assert_eq!(
         (refused["type"].as_str(), refused["reason"].as_str()),
         (Some("moderated"), Some("invalid"))
@@ -366,7 +372,7 @@ async fn an_image_is_checked_and_a_forbidden_one_blocks_the_address() {
     tokio::time::sleep(Duration::from_millis(2100)).await;
     let drugs = std::fs::read("tests/fixtures/drugs.jpg").unwrap();
     send(&mut ada, image(&drugs, "m3")).await;
-    let refused = next(&mut ada).await;
+    let refused = next_within(&mut ada, 60).await;
     assert_eq!(refused["type"], "moderated");
     assert_eq!(refused["reason"], "drugs");
     assert_eq!(refused["banned"], true);
