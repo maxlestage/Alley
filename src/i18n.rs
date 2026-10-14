@@ -135,7 +135,7 @@ pub static FR: Texts = Texts {
         (
             "🔎",
             "Cherchez ou créez",
-            "La liste des salons ouverts, une barre de recherche, et si votre salon n'existe pas encore, il est créé d'un geste. Ou privé, seulement par lien.",
+            "La liste des salons ouverts, une barre de recherche, et si votre salon n'existe pas encore, il est créé d'un geste. Ou privé, seulement par lien. Vous en êtes l'administrateur 👑 : vous excluez, vous modérez, et avec un compte vous le restez.",
         ),
         (
             "🌱",
@@ -313,7 +313,7 @@ pub static EN: Texts = Texts {
         (
             "🔎",
             "Search or create",
-            "The list of open rooms, a search bar, and if your room doesn't exist yet, it's created in one tap. Or private, by link only.",
+            "The list of open rooms, a search bar, and if your room doesn't exist yet, it's created in one tap. Or private, by link only. You are its admin 👑: you remove people, you moderate, and with an account you stay admin.",
         ),
         (
             "🌱",
@@ -491,7 +491,7 @@ pub static ES: Texts = Texts {
         (
             "🔎",
             "Busca o crea",
-            "La lista de salas abiertas, una barra de búsqueda, y si tu sala aún no existe, se crea con un gesto. O privada, solo con enlace.",
+            "La lista de salas abiertas, una barra de búsqueda, y si tu sala aún no existe, se crea con un gesto. O privada, solo con enlace. Eres su administrador 👑: expulsas, moderas, y con una cuenta lo sigues siendo.",
         ),
         (
             "🌱",
