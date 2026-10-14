@@ -3,4 +3,3 @@
 **/target
 .git
 client/pkg
-.proxy-ca.crt
