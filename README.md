@@ -56,6 +56,13 @@ voir [Déploiement](#déploiement).
 - 🎙️ Messages (gras, italique, code, liens, réponses, modification,
   suppression), photos, messages vocaux, **appels audio et vidéo**, partage
   d'écran.
+- 🧑‍💻 **Le code, mis en forme et coloré** ([`client/src/highlight.rs`](client/src/highlight.rs),
+  en Rust) : 28 langages (Rust, JavaScript, TypeScript, Python, Go, Java,
+  Kotlin, Swift, C, C++, C#, PHP, Ruby, SQL, Shell, HTML, CSS, JSON, YAML,
+  TOML, Dockerfile, diff…), langage deviné quand le bloc ne le nomme pas,
+  lignes numérotées, bouton « Copier ». Dans la saisie : le bouton `</>`,
+  le code collé mis tout seul dans un bloc, Entrée qui va à la ligne (en
+  gardant l'indentation) et Tab qui indente à l'intérieur d'un bloc.
 - 🥦 **Chiffré avec [Brocolis](https://github.com/maxlestage/Messagerie-)** :
   AES-256-GCM et jetons `[[BROCOLIS:v1:…]]`, clé du salon remise par **X25519 +
   HKDF-SHA256** exactement comme l'appairage Brocolis (recoupé avec ses
