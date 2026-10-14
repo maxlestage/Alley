@@ -1,7 +1,8 @@
 # Déploie le serveur Alley (l'API chiffrée et sa WebSocket, le site aussi)
 # sur Heroku, en HTTPS, sans la CLI Heroku : tout passe par l'API Platform
 # (`cargo xtask heroku`, en Rust), ce qui se configure depuis un téléphone.
-# Heroku construit l'image Docker lui-même (heroku.yml à la racine).
+# Heroku compile le serveur avec le buildpack emk/rust (RustConfig à la
+# racine : le navigateur, les modèles, puis `cargo build --release`).
 #
 # À faire une fois (GitHub → Settings → Secrets and variables → Actions) :
 #   - secret   HEROKU_API_KEY   Heroku → Account settings → API Key → Reveal

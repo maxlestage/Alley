@@ -4,7 +4,8 @@
 //! - `merge` : fusionne la branche poussée dans `master` (CI verte), puis
 //!   lance le déploiement (un push fait avec `GITHUB_TOKEN` ne déclenche
 //!   aucun workflow) ;
-//! - `heroku` : construit et publie le serveur sur Heroku par l'API Platform
+//! - `heroku` : construit et publie le serveur sur Heroku par l'API Platform,
+//!   avec le buildpack emk/rust
 //!   (`HEROKU_API_KEY`, `HEROKU_APP_NAME`, `HEROKU_REGION`) ;
 //! - `pages-enabled` : GitHub Pages est-il activé (source : Actions) ?
 //! - `api-url` : l'adresse de l'API pour la version GitHub Pages
@@ -206,6 +207,12 @@ pub fn api_url() -> Result<(), String> {
     Ok(())
 }
 
+/// La pile Heroku et le buildpack Rust : il compile le serveur avec
+/// `cargo build --release`, précédé du navigateur et des modèles (voir
+/// `RustConfig` à la racine).
+const STACK: &str = "heroku-24";
+const BUILDPACK: &str = "emk/rust";
+
 pub fn deploy_heroku() -> Result<(), String> {
     let (Some(_), Some(app)) = (env("HEROKU_API_KEY"), env("HEROKU_APP_NAME")) else {
         warning(
@@ -227,7 +234,7 @@ pub fn deploy_heroku() -> Result<(), String> {
             let (status, info) = heroku(
                 "POST",
                 "/apps",
-                Some(json!({ "name": app, "region": region, "stack": "container" })),
+                Some(json!({ "name": app, "region": region, "stack": STACK })),
             )?;
             if status >= 300 {
                 return Err(format!("création refusée ({status}) : {info}"));
@@ -242,12 +249,25 @@ pub fn deploy_heroku() -> Result<(), String> {
         }
         other => return Err(format!("réponse inattendue de Heroku ({other}) : {info}")),
     };
-    if info["build_stack"]["name"] != "container" {
-        heroku(
+    // Une app créée pour l'image Docker (pile « container ») repasse sur la
+    // pile des buildpacks ; la nouvelle pile vaut dès la prochaine construction.
+    if info["build_stack"]["name"] == "container" {
+        let (status, body) = heroku(
             "PATCH",
             &format!("/apps/{app}"),
-            Some(json!({ "build_stack": "container" })),
+            Some(json!({ "build_stack": STACK })),
         )?;
+        if status >= 300 {
+            return Err(format!("changement de pile refusé ({status}) : {body}"));
+        }
+    }
+    let (status, body) = heroku(
+        "PUT",
+        &format!("/apps/{app}/buildpack-installations"),
+        Some(json!({ "updates": [{ "buildpack": BUILDPACK }] })),
+    )?;
+    if status >= 300 {
+        return Err(format!("buildpack refusé ({status}) : {body}"));
     }
     // La version GitHub Pages a le droit d'appeler l'API.
     if let Some(owner) = env("GITHUB_REPOSITORY_OWNER") {

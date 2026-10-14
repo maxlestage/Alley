@@ -88,7 +88,12 @@ fn web() -> Result<(), String> {
     if !status.success() {
         return Err("la compilation du navigateur a échoué".into());
     }
-    let wasm = root.join("target/wasm32-unknown-unknown/wasm-release/alley_web.wasm");
+    // Le dossier de compilation : `CARGO_TARGET_DIR` s'il est fixé (le
+    // buildpack Heroku compile dans son cache), sinon `target/`.
+    let target = std::env::var_os("CARGO_TARGET_DIR")
+        .map(|dir| root.join(dir))
+        .unwrap_or_else(|| root.join("target"));
+    let wasm = target.join("wasm32-unknown-unknown/wasm-release/alley_web.wasm");
     let out = root.join("client/pkg");
     std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
     let mut bindgen = wasm_bindgen_cli_support::Bindgen::new();
