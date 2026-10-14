@@ -99,6 +99,19 @@ pub fn random_id(bytes: usize) -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Ce que le serveur signe d'un salon : son identifiant, son nom, s'il est
+/// privé et sa fin (en millisecondes), séparés par des zéros. Le même texte
+/// que `room_statement` du navigateur (`client/src/crypto.rs`).
+pub fn room_statement(id: &str, name: &str, private: bool, expires_at: i64) -> Vec<u8> {
+    let mut out = b"alley-room-v1\0".to_vec();
+    for part in [id, name, if private { "1" } else { "0" }] {
+        out.extend_from_slice(part.as_bytes());
+        out.push(0);
+    }
+    out.extend_from_slice(expires_at.to_string().as_bytes());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

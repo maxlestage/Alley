@@ -58,13 +58,47 @@ pub async fn load_known() {
     let body = json!({ "ids": ids });
     if let Ok(data) = request("POST", "/api/v1/known", &[], Some(&body)).await {
         let rooms = data["rooms"].as_array().cloned().unwrap_or_default();
-        let open: Vec<String> = rooms
-            .iter()
-            .filter_map(|r| r["id"].as_str().map(str::to_owned))
+        recent::prune(&server, &rooms);
+        // La signature du serveur sur chaque salon retenu : un identifiant,
+        // un nom, un type ou une fin modifiés hors d'Alley se voient.
+        if let Some(key) = server_key().await {
+            recent::verify_server(&server, &key);
+        }
+        warn_if_tampered();
+        let kept: Vec<String> = recent::list()
+            .into_iter()
+            .filter(|r| r.server == server)
+            .map(|r| r.id)
             .collect();
-        recent::prune(&server, &open);
+        let rooms: Vec<Value> = rooms
+            .into_iter()
+            .filter(|i| {
+                i["id"]
+                    .as_str()
+                    .is_some_and(|id| kept.iter().any(|k| k == id))
+            })
+            .collect();
         app(|a| a.known = rooms);
         ui::render_mine();
+    }
+}
+
+/// La clé publique du serveur, qui vérifie ce qu'il dit des salons.
+async fn server_key() -> Option<String> {
+    let server = api_base();
+    if let Some(key) = app(|a| a.server_keys.get(&server).cloned()) {
+        return Some(key);
+    }
+    let data = request("GET", "/api/v1/key", &[], None).await.ok()?;
+    let key = data["key"].as_str()?.to_owned();
+    app(|a| a.server_keys.insert(server, key.clone()));
+    Some(key)
+}
+
+/// Une donnée de l'appareil modifiée hors d'Alley a été écartée : on le dit.
+pub fn warn_if_tampered() {
+    if crate::vault::take_tampered() {
+        toast(t().storage_tampered, true);
     }
 }
 
@@ -1041,7 +1075,14 @@ pub async fn start() {
     let base = meta("alley-base");
     retire_worker();
     app(|a| a.base = base.clone());
-    i18n::set_lang(initial_lang());
+    let lang = initial_lang().await;
+    i18n::set_lang(lang);
+    if let Some(root) = document().document_element() {
+        let _ = root.set_attribute("lang", lang.code());
+    }
+    // Ce que garde l'appareil, vérifié (signatures) avant tout affichage.
+    recent::load().await;
+    warn_if_tampered();
     // Un lien de salon : `#salon=<id>`, effacé aussitôt de la barre d'adresse.
     let hash = window().location().hash().unwrap_or_default();
     if let Some(id) = hash
@@ -1076,7 +1117,8 @@ pub async fn start() {
     spawn(ticker());
     // Sur GitHub Pages sans API configurée : le serveur saisi la dernière fois.
     if needs_server() {
-        app(|a| a.server = recent::saved_server());
+        let server = recent::saved_server().await;
+        app(|a| a.server = server);
     }
     ui::render();
 }
@@ -1117,19 +1159,16 @@ async fn ticker() {
 
 const LANG_KEY: &str = "alley.lang";
 
-fn storage() -> Option<web_sys::Storage> {
-    window().local_storage().ok().flatten()
-}
-
-/// La langue choisie un jour sur cet appareil, sinon celle de la page.
-fn initial_lang() -> Lang {
+/// La langue choisie un jour sur cet appareil (si son choix est intact),
+/// sinon celle de la page.
+async fn initial_lang() -> Lang {
     let page = document()
         .document_element()
         .and_then(|e| e.get_attribute("lang"))
         .and_then(|l| Lang::parse(&l))
         .unwrap_or(Lang::Fr);
-    storage()
-        .and_then(|s| s.get_item(LANG_KEY).ok().flatten())
+    crate::vault::read(LANG_KEY)
+        .await
         .and_then(|l| Lang::parse(&l))
         .unwrap_or(page)
 }
@@ -1142,9 +1181,7 @@ pub fn app_path(lang: Lang) -> String {
 /// Change de langue sans rien perdre : tout est redessiné.
 pub fn switch_lang(lang: Lang) {
     i18n::set_lang(lang);
-    if let Some(s) = storage() {
-        let _ = s.set_item(LANG_KEY, lang.code());
-    }
+    spawn(crate::vault::write(LANG_KEY, lang.code()));
     if let Some(root) = document().document_element() {
         let _ = root.set_attribute("lang", lang.code());
     }

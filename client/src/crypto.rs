@@ -261,6 +261,83 @@ impl Identity {
     }
 }
 
+/// Ce que le serveur signe d'un salon (même texte que `room_statement` du
+/// serveur, `src/protocol.rs`) : identifiant, nom, privé ou non, fin.
+pub fn room_statement(id: &str, name: &str, private: bool, expires_at: i64) -> Vec<u8> {
+    let mut out = b"alley-room-v1\0".to_vec();
+    for part in [id, name, if private { "1" } else { "0" }] {
+        out.extend_from_slice(part.as_bytes());
+        out.push(0);
+    }
+    out.extend_from_slice(expires_at.to_string().as_bytes());
+    out
+}
+
+/// La signature du serveur sur un salon (`sig`, base64) est-elle valable
+/// pour sa clé publique (base64) ?
+pub fn room_signed_by(
+    server_key: &str,
+    id: &str,
+    name: &str,
+    private: bool,
+    expires_at: i64,
+    sig: &str,
+) -> bool {
+    let Some(public) = unb64(server_key)
+        .and_then(|raw| <[u8; 32]>::try_from(raw).ok())
+        .and_then(|raw| VerifyingKey::from_bytes(&raw).ok())
+    else {
+        return false;
+    };
+    let Some(sig) = unb64(sig).and_then(|raw| <[u8; 64]>::try_from(raw).ok()) else {
+        return false;
+    };
+    public
+        .verify_strict(
+            &room_statement(id, name, private, expires_at),
+            &Signature::from_bytes(&sig),
+        )
+        .is_ok()
+}
+
+/// Ce qui est signé d'une donnée gardée par l'appareil : son nom, le compte
+/// qui l'a écrite (vide : sans compte) et la donnée.
+pub fn vault_statement(name: &str, who: &str, data: &str) -> Vec<u8> {
+    let mut out = b"alley-vault-v1\0".to_vec();
+    for part in [name, who] {
+        out.extend_from_slice(part.as_bytes());
+        out.push(0);
+    }
+    out.extend_from_slice(data.as_bytes());
+    out
+}
+
+/// La clé du compte pour signer ce que garde l'appareil, tirée de sa graine
+/// (le mot de passe) : jamais enregistrée, elle n'existe que le temps de la
+/// visite.
+pub fn account_vault_key(seed: &[u8]) -> Key {
+    let hk = Hkdf::<Sha256>::new(Some(b"alley-account"), seed);
+    let mut out = [0u8; 32];
+    hk.expand(b"vault", &mut out).expect("32 octets");
+    out
+}
+
+/// HMAC-SHA256.
+pub fn mac(key: &Key, data: &[u8]) -> [u8; 32] {
+    use hmac::Mac;
+    let mut m = <hmac::Hmac<Sha256> as Mac>::new_from_slice(key).expect("toute longueur de clé");
+    m.update(data);
+    m.finalize().into_bytes().into()
+}
+
+/// Vérifie un HMAC-SHA256 (en temps constant).
+pub fn mac_ok(key: &Key, data: &[u8], tag: &[u8]) -> bool {
+    use hmac::Mac;
+    let mut m = <hmac::Hmac<Sha256> as Mac>::new_from_slice(key).expect("toute longueur de clé");
+    m.update(data);
+    m.verify_slice(tag).is_ok()
+}
+
 /// Le domaine des signatures d'Alley : une signature faite ici ne vaut rien
 /// ailleurs.
 const SIG_DOMAIN: &[u8] = b"alley-sig-v1";
@@ -575,5 +652,82 @@ mod tests {
         assert!(!seen.fresh(9));
         assert!(seen.fresh(11) && seen.fresh(11 + Replay::WINDOW));
         assert!(seen.seen.len() <= 2, "la mémoire reste bornée");
+    }
+
+    #[test]
+    fn room_statements_match_the_server_and_resist_edits() {
+        let key = SigningKey::from_bytes(&[3u8; 32]);
+        let public = b64(&key.verifying_key().to_bytes());
+        let statement = room_statement("ab12", "Café", true, 1_791_936_000_000);
+        assert_eq!(
+            statement,
+            b"alley-room-v1\0ab12\0Caf\xc3\xa9\x001\x001791936000000".to_vec()
+        );
+        let sig = b64(&key.sign(&statement).to_bytes());
+        assert!(room_signed_by(
+            &public,
+            "ab12",
+            "Café",
+            true,
+            1_791_936_000_000,
+            &sig
+        ));
+        assert!(!room_signed_by(
+            &public,
+            "ab12",
+            "Phishing",
+            true,
+            1_791_936_000_000,
+            &sig
+        ));
+        assert!(!room_signed_by(
+            &public,
+            "ab12",
+            "Café",
+            false,
+            1_791_936_000_000,
+            &sig
+        ));
+        assert!(!room_signed_by(
+            &public,
+            "ab12",
+            "Café",
+            true,
+            1_891_936_000_000,
+            &sig
+        ));
+        assert!(!room_signed_by(
+            &public,
+            "ab12",
+            "Café",
+            true,
+            1_791_936_000_000,
+            "abîmé"
+        ));
+    }
+
+    #[test]
+    fn the_account_signature_needs_the_password() {
+        let key = account_vault_key(b"graine du mot de passe");
+        assert_ne!(key, account_vault_key(b"une autre graine"));
+        let data = vault_statement("alley.rooms.v1", "compte", "[]");
+        let tag = mac(&key, &data);
+        assert!(mac_ok(&key, &data, &tag));
+        assert!(!mac_ok(
+            &key,
+            &vault_statement("alley.rooms.v1", "compte", "[{}]"),
+            &tag
+        ));
+        assert!(!mac_ok(
+            &key,
+            &vault_statement("alley.server", "compte", "[]"),
+            &tag
+        ));
+        assert!(!mac_ok(
+            &key,
+            &vault_statement("alley.rooms.v1", "", "[]"),
+            &tag
+        ));
+        assert!(!mac_ok(&account_vault_key(b"autre"), &data, &tag));
     }
 }
