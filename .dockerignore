@@ -1,4 +1,4 @@
-# Seules les sources entrent dans l'image : les compilations locales et le
+# Seules les sources entrent dans l'image Docker : les compilations locales et le
 # navigateur compilé sont refaits dans l'image.
 **/target
 .git
