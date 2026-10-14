@@ -6,7 +6,8 @@
 //! | `POST /rooms` | crée un salon (`{name, private, tz}`) ou rejoint celui de ce nom |
 //! | `GET /rooms/:id` | un salon (pour un lien de salon privé) |
 //! | `POST /mine` | les salons ouverts d'une marque (`{tag}`, compte connecté) |
-//! | `GET /rooms/:id/live?x=&t=` | le salon en direct (WebSocket) |
+//! | `POST /known` | parmi des salons (`{ids}`, ceux dont se souvient l'appareil), les ouverts |
+//! | `GET /rooms/:id/live?x=&s=&t=` | le salon en direct (WebSocket) |
 //! | `GET /ice` | les serveurs STUN/TURN des appels |
 //! | `GET /stats` | ce que voit le serveur : des nombres |
 //!
@@ -72,6 +73,11 @@ async fn list(req: Request) -> Json<Value> {
 }
 
 #[data]
+pub struct Known {
+    pub ids: Vec<String>,
+}
+
+#[data]
 pub struct Mine {
     pub tag: String,
 }
@@ -112,10 +118,25 @@ async fn mine(req: Request) -> (u16, Json<Value>) {
     }
 }
 
+/// `POST /api/v1/known` : parmi les salons dont se souvient un appareil,
+/// ceux qui sont encore ouverts.
+async fn known(req: Request) -> (u16, Json<Value>) {
+    match req.json::<Known>().await {
+        Ok(body) if body.ids.len() <= rooms::MAX_KNOWN => {
+            let rooms = req.state::<Rooms>();
+            rooms.sweep();
+            (200, Json(json!({ "rooms": rooms.known(&body.ids) })))
+        }
+        _ => fail(400, "bad_request"),
+    }
+}
+
 /// `GET /api/v1/rooms/:id`
 async fn show(req: Request) -> (u16, Json<Value>) {
     let id = req.param("id").unwrap_or_default();
-    match req.state::<Rooms>().info(id) {
+    let rooms = req.state::<Rooms>();
+    rooms.sweep();
+    match rooms.info(id) {
         Some(room) => (200, Json(room)),
         None => fail(404, "room_gone"),
     }
@@ -150,10 +171,12 @@ async fn ice(_req: Request) -> Json<Value> {
 }
 
 /// Le salon en direct : `GET /api/v1/rooms/:id/live?x=<clé publique X25519,
-/// base64url>&t=<marque, si connecté>`.
+/// base64url>&s=<clé publique Ed25519, base64url>&t=<marque, si connecté>`.
 async fn live(req: Request, socket: ws::WebSocket) {
     let id = req.param("id").unwrap_or_default().to_owned();
     let x = req.query("x").and_then(|x| public_key_from_url(&x));
+    // La clé qui signe tout ce qu'il enverra : relayée aux autres membres.
+    let s = req.query("s").and_then(|s| public_key_from_url(&s));
     let tag = req.query("t").map(|t| t.into_owned());
     let ip = req.ip();
     let mut socket = socket;
@@ -173,7 +196,7 @@ async fn live(req: Request, socket: ws::WebSocket) {
         let _ = socket.close(4404, "salon introuvable ou complet").await;
         return;
     };
-    let joined = match rooms.join(&id, x, ip, tag.as_deref()) {
+    let joined = match rooms.join(&id, x, s, ip, tag.as_deref()) {
         Ok(joined) => joined,
         Err(JoinError::Barred) => {
             let _ = socket.close(4410, "exclu").await;
@@ -396,6 +419,7 @@ pub fn routes(app: &mut App) {
     app.get("/api/v1/rooms", list);
     app.post("/api/v1/rooms", create);
     app.post("/api/v1/mine", mine);
+    app.post("/api/v1/known", known);
     app.get("/api/v1/rooms/:id", show);
     app.ws("/api/v1/rooms/:id/live", live);
     app.get("/api/v1/ice", ice);
