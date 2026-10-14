@@ -653,6 +653,22 @@ pub fn app() -> String {
             ("max-width", "min(400px, 100%)"),
         ],
     );
+    s.rule(".image", &[("position", "relative")]);
+    s.rule(
+        ".image.pending img",
+        &[("opacity", "0.45"), ("filter", "blur(6px)")],
+    );
+    s.rule(
+        ".image .checking",
+        &[
+            ("position", "absolute"),
+            ("inset", "0"),
+            ("display", "grid"),
+            ("place-items", "center"),
+            ("font-weight", "700"),
+            ("color", "var(--fg)"),
+        ],
+    );
     s.rule(
         ".image img",
         &[
@@ -1788,6 +1804,62 @@ pub fn app() -> String {
         ],
     );
     s.rule(".empty.error", &[("color", "var(--danger)")]);
+    // ---- Connexion, langue, blocage --------------------------------------------
+    s.rule(
+        ".card-top",
+        &[
+            ("display", "flex"),
+            ("width", "100%"),
+            ("margin-bottom", "-6px"),
+        ],
+    );
+    s.rule(
+        "select.lang",
+        &[
+            ("min-height", "36px"),
+            ("padding", "0 10px"),
+            ("border-radius", "10px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--elev)"),
+            ("color", "var(--fg)"),
+            ("font", "inherit"),
+            ("font-size", "14px"),
+        ],
+    );
+    s.rule(
+        ".welcome-card button.link-button",
+        &[
+            ("background", "transparent"),
+            ("border-color", "transparent"),
+            ("color", "var(--accent)"),
+            ("text-decoration", "underline"),
+            ("text-underline-offset", "3px"),
+        ],
+    );
+    s.rule(
+        ".welcome-card .field input:invalid",
+        &[("box-shadow", "none")],
+    );
+    s.rule(".welcome-card.banned", &[("border-color", "var(--danger)")]);
+    s.rule(".big-icon", &[("font-size", "56px"), ("line-height", "1")]);
+    s.rule(
+        ".mine",
+        &[
+            ("display", "grid"),
+            ("gap", "4px"),
+            ("padding", "14px 16px"),
+            ("border-radius", "16px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--side)"),
+        ],
+    );
+    s.rule(".mine h2", &[("margin", "0"), ("font-size", "18px")]);
+    s.rule(".mine .room-card", &[("background", "var(--elev)")]);
+    s.rule(
+        ".mine .empty",
+        &[("padding", "8px 0"), ("text-align", "left")],
+    );
+    s.rule(".key-badge", &[("font-size", "12px")]);
     // ---- Le salon ------------------------------------------------------------
     s.rule(
         ".room-layout, .room-layout.members-open",

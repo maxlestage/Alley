@@ -15,6 +15,7 @@ use paquets::active::pwa::{Manifest, version};
 use paquets::prelude::*;
 use paquets::vitesse::{Response, header};
 
+use crate::i18n::{LANGS, Lang};
 use crate::{Site, style};
 
 /// `(chemin, type, contenu)` d'un fichier servi sous `/assets/`.
@@ -114,23 +115,28 @@ pub fn versioned(site: &Site, path: &str) -> String {
     format!("{}?v={}", site.url(path), build_version())
 }
 
-pub const MANIFEST_URL: &str = "/manifest.webmanifest";
+/// Le manifeste d'une langue : `/manifest.webmanifest`,
+/// `/en/manifest.webmanifest`…
+pub fn manifest_url(lang: Lang) -> String {
+    lang.path("/manifest.webmanifest")
+}
 /// La page qu'ouvre l'application installée.
 pub const START_URL: &str = "/app/";
 pub const THEME_COLOR: &str = "#16131f";
 
-/// Le manifeste : nom, icônes, couleurs, plein écran.
-pub fn manifest(site: &Site) -> Manifest {
-    Manifest::new("Alley — messagerie chiffrée")
+/// Le manifeste d'une langue : nom, icônes, couleurs, plein écran.
+pub fn manifest(site: &Site, lang: Lang) -> Manifest {
+    let t = lang.texts();
+    Manifest::new(t.manifest_name)
         .short_name("Alley")
-        .description("Salons éphémères chiffrés de bout en bout : rien n'est enregistré, tout s'efface à minuit.")
-        .id(site.url(START_URL))
-        .start_url(site.url(START_URL))
+        .description(t.manifest_description)
+        .id(site.url(&lang.path(START_URL)))
+        .start_url(site.url(&lang.path(START_URL)))
         .scope(site.url("/"))
         .display("standalone")
         .theme_color(THEME_COLOR)
         .background_color(THEME_COLOR)
-        .lang("fr")
+        .lang(lang.code())
         .categories(["social", "communication", "productivity"])
         .icon(site.url("/assets/icon-192.png"), "192x192", "image/png")
         .icon(site.url("/assets/icon-512.png"), "512x512", "image/png")
@@ -151,16 +157,18 @@ pub fn routes(app: &mut App, site: &Site) {
                 .send(bytes)
         });
     }
-    let manifest = manifest(site).to_json();
-    app.get(MANIFEST_URL, move |_| {
-        let manifest = manifest.clone();
-        async move {
-            Response::new()
-                .header(header::CONTENT_TYPE, "application/manifest+json")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .send(manifest)
-        }
-    });
+    for lang in LANGS {
+        let manifest = manifest(site, lang).to_json();
+        app.get(&manifest_url(lang), move |_| {
+            let manifest = manifest.clone();
+            async move {
+                Response::new()
+                    .header(header::CONTENT_TYPE, "application/manifest+json")
+                    .header(header::CACHE_CONTROL, "no-cache")
+                    .send(manifest)
+            }
+        });
+    }
     // L'icône que cherchent les navigateurs de bureau à la racine.
     app.get("/favicon.ico", |_| async {
         Redirect::permanent("/assets/favicon.svg")

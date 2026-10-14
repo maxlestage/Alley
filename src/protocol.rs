@@ -60,6 +60,37 @@ pub fn public_key_from_url(text: &str) -> Option<String> {
     (bytes.len() == PUBLIC_KEY_LEN).then(|| STANDARD.encode(bytes))
 }
 
+/// Déchiffre un jeton avec une clé de 32 octets : ce que fait le serveur
+/// d'une image dont l'expéditeur lui confie la clé, le temps de la vérifier.
+pub fn open_token(key: &[u8; 32], token: &str) -> Option<Vec<u8>> {
+    use aes_gcm::aead::{Aead, KeyInit};
+    use aes_gcm::{Aes256Gcm, Nonce};
+    let inner = token.strip_prefix(TOKEN_V1)?.strip_suffix(TOKEN_END)?;
+    let bytes = STANDARD.decode(inner).ok()?;
+    if bytes.len() < MIN_COMBINED {
+        return None;
+    }
+    let (nonce, sealed) = bytes.split_at(12);
+    Aes256Gcm::new(key.into())
+        .decrypt(Nonce::from_slice(nonce), sealed)
+        .ok()
+}
+
+/// Une clé de 32 octets en base64 standard.
+pub fn key_from_b64(text: &str) -> Option<[u8; 32]> {
+    STANDARD.decode(text.trim()).ok()?.try_into().ok()
+}
+
+/// L'empreinte d'une clé (SHA-256, hexadécimal) : relayée avec l'image, elle
+/// engage l'expéditeur sur la clé qu'il a montrée au serveur.
+pub fn key_commitment(key: &[u8; 32]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(key)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// Un identifiant aléatoire et imprévisible (salons, connexions), en
 /// hexadécimal : `bytes` octets tirés du générateur du système.
 pub fn random_id(bytes: usize) -> String {
@@ -103,6 +134,14 @@ mod tests {
             PUBLIC_KEY_LEN
         ));
         assert!(!is_b64_len("pas du base64", PUBLIC_KEY_LEN));
+        // Le jeton de référence de Brocolis (« bonjour », clé 0x09 × 32).
+        let token = "[[BROCOLIS:v1:uAI9wrumtTlX/P8fBdLphS15X//kXm4SZje5yfVDld2L3Ac=]]";
+        assert_eq!(
+            open_token(&[9; 32], token).as_deref(),
+            Some(&b"bonjour"[..])
+        );
+        assert!(open_token(&[8; 32], token).is_none());
+        assert_eq!(key_commitment(&[0; 32]).len(), 64);
         let (a, b) = (random_id(8), random_id(8));
         assert_eq!(a.len(), 16);
         assert_ne!(a, b);

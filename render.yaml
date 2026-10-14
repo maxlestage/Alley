@@ -1,0 +1,14 @@
+# Déploiement sur Render en un clic (offre gratuite, HTTPS) : le même
+# Dockerfile que Heroku. Après le premier déploiement, mettez l'adresse
+# https://<service>.onrender.com dans la variable ALLEY_API_URL du dépôt
+# (Settings → Secrets and variables → Actions → Variables) pour que la
+# version GitHub Pages s'y connecte.
+services:
+  - type: web
+    name: alley
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/v1/stats
+    envVars:
+      - key: ALLEY_ALLOWED_ORIGINS
+        value: https://maxlestage.github.io
