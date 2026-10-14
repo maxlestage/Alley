@@ -222,17 +222,33 @@ async fn a_room_hands_its_key_over_relays_and_forgets() {
     .await;
     assert_eq!(next(&mut ada).await["from"], bob_conn);
 
-    // Bob part ; Ada aussi : le salon disparaît avec elle.
+    // Bob part ; Ada aussi : le salon reste, vide, jusqu'à minuit, et
+    // l'appareil qui s'en souvient le retrouve. Aucun message n'est gardé.
     bob.close(None).await.unwrap();
     assert_eq!(next(&mut ada).await["type"], "left");
     ada.close(None).await.unwrap();
     tokio::time::sleep(Duration::from_millis(200)).await;
-    let gone: Value = http("GET", &format!("/api/v1/rooms/{id}"), None).await;
-    assert_eq!(gone["status"], 404);
+    let still: Value = http("GET", &format!("/api/v1/rooms/{id}"), None).await;
+    assert_eq!(
+        (still["id"].as_str(), still["members"].as_u64()),
+        (Some(id.as_str()), Some(0))
+    );
+    let known: Value = http(
+        "POST",
+        "/api/v1/known",
+        Some(json!({ "ids": [id, "0123456789ab"] })),
+    )
+    .await;
+    assert_eq!(known["rooms"].as_array().unwrap().len(), 1);
+    assert_eq!(known["rooms"][0]["id"], id.as_str());
     let stats: Value = http("GET", "/api/v1/stats", None).await;
     assert_eq!(
-        (stats["rooms"].as_u64(), stats["messages_stored"].as_u64()),
-        (Some(0), Some(0))
+        (
+            stats["rooms"].as_u64(),
+            stats["connections"].as_u64(),
+            stats["messages_stored"].as_u64()
+        ),
+        (Some(1), Some(0), Some(0))
     );
 }
 

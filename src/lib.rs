@@ -2,16 +2,20 @@
 //!
 //! - **un pseudonyme suffit** ; avec un mot de passe (retenu par le
 //!   navigateur, jamais envoyé), on retrouve ses salons sur tous ses
-//!   appareils. Rien n'est enregistré, ni sur l'appareil ni sur le serveur ;
+//!   appareils. Aucun message n'est enregistré, ni sur l'appareil ni sur le
+//!   serveur ; l'appareil retient seulement les salons créés ou visités,
+//!   jusqu'à leur minuit, pour y revenir ;
 //! - le contenu sexuel et la drogue sont interdits ; une image interdite
 //!   bloque l'adresse IP de son auteur ([`moderation`]) ;
 //! - en français, en anglais et en espagnol ([`i18n`]) ;
-//! - **un salon ne vit que tant que quelqu'un y est**, et disparaît à minuit
-//!   dans le pays de celui qui l'a créé ([`rooms`]) ; qui arrive ne voit rien
-//!   de ce qui s'est dit avant ;
+//! - **un salon reste ouvert jusqu'à minuit**, même vide, dans le pays de
+//!   celui qui l'a créé ([`rooms`]) ; qui arrive ne voit rien de ce qui s'est
+//!   dit avant ;
 //! - les messages, photos, vocaux et pseudonymes sont chiffrés dans le
 //!   navigateur avec le protocole de la messagerie **Brocolis 🥦** (AES-256-GCM,
-//!   jetons `[[BROCOLIS:v1:…]]`, clé du salon remise par X25519) ;
+//!   jetons `[[BROCOLIS:v1:…]]`, clé du salon remise par X25519), et **signés**
+//!   par leur auteur (Ed25519, numérotés) : rien ne peut être modifié, rejoué
+//!   ni attribué à un autre ;
 //! - les appels audio et vidéo passent de pair à pair (WebRTC, DTLS-SRTP),
 //!   avec une signalisation chiffrée ;
 //! - le serveur est une [`App`] **Paquets 📦** : Vitesse pour le web et la
@@ -165,7 +169,7 @@ pub fn app() -> App {
             next.run(req).await
         },
     );
-    // Les salons, en mémoire seulement : rien n'est enregistré.
+    // Les salons, en mémoire seulement : aucun message n'est enregistré.
     app.state(Rooms::default());
     api::routes(&mut app);
     assets::routes(&mut app, &Site::server());

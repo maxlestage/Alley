@@ -2034,6 +2034,49 @@ pub fn app() -> String {
         ".mine .empty",
         &[("padding", "8px 0"), ("text-align", "left")],
     );
+    s.rule(".mine[hidden], .mine [hidden]", &[("display", "none")]);
+    s.rule(
+        ".section-head",
+        &[
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("justify-content", "space-between"),
+            ("gap", "12px"),
+        ],
+    );
+    s.rule(".section-head .link-button", &[("font-size", "13px")]);
+    // Un salon dont se souvient l'appareil : la carte, et de quoi l'oublier.
+    s.rule(".recent-card", &[("position", "relative")]);
+    s.rule(".recent-card .room-card", &[("padding-right", "48px")]);
+    s.rule(
+        "button.forget",
+        &[
+            ("position", "absolute"),
+            ("top", "8px"),
+            ("right", "8px"),
+            ("width", "36px"),
+            ("height", "36px"),
+            ("border-radius", "10px"),
+            ("color", "var(--muted)"),
+            ("background", "transparent"),
+        ],
+    );
+    s.rule(
+        "button.forget:hover, button.forget:focus-visible",
+        &[("background", "var(--hover)"), ("color", "var(--fg)")],
+    );
+    s.rule(
+        ".created-badge",
+        &[
+            ("justify-self", "start"),
+            ("margin-top", "4px"),
+            ("padding", "2px 8px"),
+            ("border-radius", "999px"),
+            ("font-size", "12px"),
+            ("color", "var(--accent)"),
+            ("border", "1px solid var(--accent)"),
+        ],
+    );
     s.rule(".key-badge", &[("font-size", "12px")]);
     // L'administration du salon.
     s.rule(".member .name", &[("flex", "1"), ("min-width", "0")]);
