@@ -26,6 +26,7 @@
 
 pub mod api;
 pub mod assets;
+pub mod billing;
 pub mod export;
 pub mod i18n;
 pub mod moderation;
@@ -100,7 +101,9 @@ pub fn shield() -> Shield {
     let mut cors = Cors::new()
         .allow_headers(["content-type"])
         .max_age(std::time::Duration::from_secs(3600));
-    let mut csrf = Csrf::new();
+    // Le webhook de Stripe : signé (HMAC), il vient d'un serveur, pas d'un
+    // navigateur.
+    let mut csrf = Csrf::new().exempt(billing::WEBHOOK_PATH);
     for origin in allowed_origins() {
         cors = cors.allow_origin(&origin);
         csrf = csrf.trusted_origin(&origin);
@@ -115,7 +118,9 @@ pub fn shield() -> Shield {
         .guard(HttpsRedirect::new())
         .guard(cors)
         .guard(csrf)
-        .guard(BodyLimit::new(16 * 1024))
+        .guard(
+            BodyLimit::new(16 * 1024).route(billing::WEBHOOK_PATH, billing::WEBHOOK_LIMIT as u64),
+        )
         .guard(RateLimit::new(Quota::per_second(30).burst(150)))
         .guard(SecurityHeaders::new().permissions_policy(PERMISSIONS_POLICY))
         .build()
@@ -169,9 +174,23 @@ pub fn app() -> App {
             next.run(req).await
         },
     );
-    // Les salons, en mémoire seulement : aucun message n'est enregistré.
-    app.state(Rooms::default());
+    // Les salons, en mémoire : aucun message n'est enregistré. Seuls les
+    // salons de plusieurs jours (abonnements), les abonnements et la clé qui
+    // signe les salons sont gardés en base (`DATABASE_URL`), et relus au
+    // démarrage.
+    let rooms = Rooms::default();
+    app.state(rooms.clone());
+    let billing = billing::Billing::from_env();
+    app.state(billing.clone());
+    app.model::<billing::Subscription>();
+    app.model::<billing::KeptRoom>();
+    app.model::<billing::Setting>();
+    app.on_start(move |db| async move {
+        billing.set_database(db.kind());
+        billing::restore(db, &rooms).await
+    });
     api::routes(&mut app);
+    billing::routes(&mut app);
     assets::routes(&mut app, &Site::server());
     pages::routes(&mut app, &Site::server());
     app
