@@ -3,8 +3,8 @@
 //! systèmes : le manifeste d'application web, construit avec le module `pwa`
 //! d'Active.
 //!
-//! Pas de service worker : un salon n'existe que tant que quelqu'un y est
-//! connecté, il n'y a rien à ouvrir hors ligne. Les adresses des fichiers
+//! Pas de service worker : un salon ne se vit qu'en ligne, avec ceux qui y
+//! sont connectés ; il n'y a rien à ouvrir hors ligne. Les adresses des fichiers
 //! portent la version de l'application (`?v=…`) : un navigateur ne garde
 //! jamais un ancien fichier après une mise à jour.
 

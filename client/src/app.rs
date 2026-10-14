@@ -15,7 +15,8 @@ use crate::crypto::{self, Identity};
 use crate::dom::*;
 use crate::i18n::{self, Lang, t};
 use crate::model::*;
-use crate::net::{ApiError, needs_server, request, ws_base};
+use crate::net::{ApiError, api_base, needs_server, request, ws_base};
+use crate::recent;
 use crate::ui;
 
 // ---------------------------------------------------------------------------
@@ -38,6 +39,33 @@ pub async fn load_rooms() {
         Err(e) => ui::lobby_error(&e.text()),
     }
     load_mine().await;
+    load_known().await;
+}
+
+/// Les salons dont se souvient l'appareil, sur ce serveur : ceux qui sont
+/// encore ouverts (les autres sont oubliés).
+pub async fn load_known() {
+    let server = api_base();
+    let ids: Vec<String> = recent::list()
+        .into_iter()
+        .filter(|r| r.server == server)
+        .map(|r| r.id)
+        .collect();
+    if ids.is_empty() {
+        app(|a| a.known.clear());
+        return ui::render_mine();
+    }
+    let body = json!({ "ids": ids });
+    if let Ok(data) = request("POST", "/api/v1/known", &[], Some(&body)).await {
+        let rooms = data["rooms"].as_array().cloned().unwrap_or_default();
+        let open: Vec<String> = rooms
+            .iter()
+            .filter_map(|r| r["id"].as_str().map(str::to_owned))
+            .collect();
+        recent::prune(&server, &open);
+        app(|a| a.known = rooms);
+        ui::render_mine();
+    }
 }
 
 /// Les salons ouverts du compte connecté, retrouvés grâce à sa marque.
@@ -90,6 +118,7 @@ pub async fn create_room(name: &str, private: bool) {
     let body = json!({ "name": name, "private": private, "tz": tz_offset() });
     match request("POST", "/api/v1/rooms", &[], Some(&body)).await {
         Ok(room) => {
+            recent::remember(&room, &api_base(), true);
             if let Some(id) = room["id"].as_str() {
                 join_room(id).await;
             }
@@ -125,6 +154,8 @@ async fn rejoin(id: &str, retries: u32) {
             return;
         }
     };
+    // L'appareil s'en souvient, pour y revenir depuis le hall.
+    recent::remember(&info, &api_base(), false);
     let room = Room {
         id: id.to_owned(),
         name: info["name"].as_str().unwrap_or("Alley").to_owned(),
@@ -133,6 +164,8 @@ async fn rejoin(id: &str, retries: u32) {
         me: String::new(),
         order: 0,
         identity: Identity::generate(),
+        signer: crypto::Signer::generate(),
+        sent: Default::default(),
         key: None,
         fingerprint: String::new(),
         peers: Default::default(),
@@ -187,12 +220,19 @@ pub fn leave_room(reason: Option<&str>) {
 // En direct
 
 fn connect(room: &RoomRef) {
-    let (id, x) = {
+    let (id, x, s) = {
         let r = room.borrow();
-        (r.id.clone(), crypto::b64url(&r.identity.public_raw()))
+        (
+            r.id.clone(),
+            crypto::b64url(&r.identity.public_raw()),
+            crypto::b64url(&r.signer.public_raw()),
+        )
     };
     let tag = app(|a| a.account.as_ref().map(|acc| format!("&t={}", acc.tag))).unwrap_or_default();
-    let Ok(ws) = WebSocket::new(&format!("{}/api/v1/rooms/{id}/live?x={x}{tag}", ws_base())) else {
+    let Ok(ws) = WebSocket::new(&format!(
+        "{}/api/v1/rooms/{id}/live?x={x}&s={s}{tag}",
+        ws_base()
+    )) else {
         return;
     };
     let mut listeners = Vec::new();
@@ -285,7 +325,7 @@ fn send_raw(room: &RoomRef, value: &Value) {
 
 /// Envoie un message chiffré : à tous, ou à une seule personne.
 pub fn send(room: &RoomRef, to: Option<&str>, payload: Value) {
-    let Some(data) = room.borrow().enc(&payload) else {
+    let Some(data) = room.borrow().enc(to, &payload) else {
         return;
     };
     let mut msg = json!({ "type": "relay", "data": data });
@@ -332,6 +372,7 @@ fn on_event(room: &RoomRef, event: Value) {
                         id,
                         Peer {
                             x: p["x"].as_str().unwrap_or_default().to_owned(),
+                            s: p["s"].as_str().map(str::to_owned),
                             order: p["order"].as_u64().unwrap_or_default(),
                             ..Peer::default()
                         },
@@ -372,6 +413,7 @@ fn on_event(room: &RoomRef, event: Value) {
                     id.clone(),
                     Peer {
                         x: x.clone(),
+                        s: event["s"].as_str().map(str::to_owned),
                         order: event["order"].as_u64().unwrap_or_default(),
                         ..Peer::default()
                     },
@@ -515,8 +557,13 @@ fn verified_image(event: &Value, ik: &str) -> Option<String> {
 fn on_relay(room: &RoomRef, event: &Value) {
     let from = event["from"].as_str().unwrap_or_default();
     let data = event["data"].as_str().unwrap_or_default();
-    let Some(p) = room.borrow().dec(data) else {
-        return;
+    let decoded = room.borrow_mut().dec(from, data);
+    let p = match decoded {
+        Ok(p) => p,
+        // Ni lisible ni signé de lui : écarté. Si c'était bien pour nous
+        // (lisible) mais pas signé comme il faut, on prévient, une fois.
+        Err(crypto::Rejected::Unreadable) => return,
+        Err(_) => return rejected(room, from),
     };
     let str_of = |k: &str| p[k].as_str().unwrap_or_default().to_owned();
     match p["k"].as_str().unwrap_or_default() {
@@ -656,6 +703,20 @@ fn on_relay(room: &RoomRef, event: &Value) {
     }
 }
 
+/// Un envoi de `from` est écarté (signature fausse, rejoué, détourné) : on
+/// prévient une fois par membre.
+fn rejected(room: &RoomRef, from: &str) {
+    let first = room
+        .borrow_mut()
+        .peers
+        .get_mut(from)
+        .is_some_and(|peer| !std::mem::replace(&mut peer.warned, true));
+    if first {
+        let name = room.borrow().name_of(from);
+        toast(i18n::fill(t().signature_rejected, &[&name]), true);
+    }
+}
+
 /// Envoie une photo (JPEG, en base64) : elle est chiffrée avec sa propre clé,
 /// confiée au serveur le temps qu'il la vérifie, et aux présents dans le
 /// message chiffré du salon.
@@ -671,10 +732,13 @@ pub fn send_image(jpeg_b64: String) {
     let c = crypto::seal_bytes_token(&key, &jpeg);
     let reply = app(|a| a.reply_to.take()).unwrap_or_default();
     let mid = crypto::hex(&crypto::random_bytes::<8>());
-    let Some(data) = room.borrow().enc(&payload(
-        "msg",
-        json!({ "mid": mid, "kind": "image", "ik": crypto::b64(&key), "r": reply }),
-    )) else {
+    let Some(data) = room.borrow().enc(
+        None,
+        &payload(
+            "msg",
+            json!({ "mid": mid, "kind": "image", "ik": crypto::b64(&key), "r": reply }),
+        ),
+    ) else {
         return;
     };
     send_raw(
@@ -1010,7 +1074,10 @@ pub async fn start() {
         listen_forever(&mq, "change", |_| ui::render());
     }
     spawn(ticker());
-    let _ = needs_server();
+    // Sur GitHub Pages sans API configurée : le serveur saisi la dernière fois.
+    if needs_server() {
+        app(|a| a.server = recent::saved_server());
+    }
     ui::render();
 }
 

@@ -99,16 +99,16 @@ pub struct Texts {
 pub static FR: Texts = Texts {
     locale: "fr_FR",
     title: "Alley — salons éphémères, chiffrés de bout en bout",
-    description: "Alley : des salons de discussion éphémères, chiffrés de bout en bout. Un pseudonyme suffit ; rien n'est enregistré, et tout disparaît à minuit. Messages, photos, vocaux et appels vidéo, sur iPhone, Android, Windows, macOS et Linux.",
+    description: "Alley : des salons de discussion éphémères, chiffrés de bout en bout. Un pseudonyme suffit ; aucun message n'est enregistré, et tout disparaît à minuit. Messages, photos, vocaux et appels vidéo, sur iPhone, Android, Windows, macOS et Linux.",
     language: "Langue",
     home_label: "Alley, accueil",
     nav_features: "Fonctionnalités",
     nav_security: "Sécurité",
     nav_install: "Installer",
     open_app: "Ouvrir Alley",
-    eyebrow: "🔒 Chiffré de bout en bout · Rien n'est enregistré · Gratuit",
+    eyebrow: "🔒 Chiffré et signé de bout en bout · Aucun message enregistré · Gratuit",
     headline: "On parle. À minuit, tout s'efface.",
-    lead: "Alley, ce sont des salons de discussion légers : un pseudonyme et c'est parti. Un salon ne vit que tant que quelqu'un y est, personne ne voit ce qui s'est dit avant son arrivée, et à minuit il ne reste rien — ni sur le serveur, ni sur votre téléphone.",
+    lead: "Alley, ce sont des salons de discussion légers : un pseudonyme et c'est parti. Un salon reste ouvert jusqu'à minuit, et vous y revenez d'un geste ; personne ne voit ce qui s'est dit avant son arrivée, et à minuit il ne reste rien — ni sur le serveur, ni sur votre téléphone.",
     cta_enter: "Entrer dans Alley",
     cta_how: "Comment ça marche",
     hero_hint: "Dans le navigateur, et installable comme une app sur iPhone, iPad, Android, Windows, macOS, Linux et ChromeOS.",
@@ -130,7 +130,7 @@ pub static FR: Texts = Texts {
         (
             "🔑",
             "Vos salons vous suivent",
-            "Connecté, vous retrouvez sur tous vos appareils les salons où vous êtes allé, tant qu'ils existent. Votre mot de passe ne quitte jamais votre appareil.",
+            "Les salons que vous créez ou visitez restent dans votre hall jusqu'à minuit, avec leur serveur : vous y revenez d'un geste. Connecté, ils vous suivent sur tous vos appareils ; votre mot de passe ne quitte jamais le vôtre.",
         ),
         (
             "🔎",
@@ -139,8 +139,8 @@ pub static FR: Texts = Texts {
         ),
         (
             "🌱",
-            "Des salons vivants",
-            "Un salon existe tant que quelqu'un y est. Le dernier qui part l'emporte avec lui.",
+            "Des salons où revenir",
+            "Un salon reste ouvert jusqu'à minuit, même quand tout le monde est parti : revenez quand vous voulez. Les messages, eux, ne sont jamais gardés.",
         ),
         (
             "🙈",
@@ -175,22 +175,22 @@ pub static FR: Texts = Texts {
         ),
         (
             "Tout est chiffré avant de partir",
-            "Messages, pseudonymes, photos, vocaux et mise en relation des appels deviennent des jetons [[BROCOLIS:v1:…]] que le serveur relaie sans pouvoir les lire. Seules les photos lui sont montrées un instant, le temps de vérifier qu'elles sont permises.",
+            "Messages, pseudonymes, photos, vocaux et mise en relation des appels deviennent des jetons [[BROCOLIS:v1:…]], chiffrés et signés par leur auteur (Ed25519) : le serveur les relaie sans pouvoir ni les lire ni les modifier, et un envoi altéré, rejoué ou attribué à un autre est écarté. Seules les photos lui sont montrées un instant, le temps de vérifier qu'elles sont permises.",
         ),
         (
-            "Rien n'est gardé",
+            "Aucun message gardé",
             "Le serveur ne stocke aucun message : les absents ne reçoivent rien, les retardataires ne voient rien d'avant. Votre mot de passe, lui, ne quitte jamais votre appareil.",
         ),
         (
             "Vérifiez l'empreinte",
-            "Chaque salon affiche l'empreinte de sa clé (ex. 4BB0-6F8E-4E3A-7715) : identique chez tous les présents, personne ne s'est intercalé.",
+            "Chaque salon affiche l'empreinte de sa clé (ex. 4BB0-6F8E-4E3A-7715) : identique chez tous les présents, personne ne s'est intercalé. Survolez un membre pour voir l'empreinte de sa clé de signature.",
         ),
     ],
     tech: [
         (
             "🥦",
             "Le protocole Brocolis",
-            "AES-256-GCM et jetons de la messagerie Brocolis, clés remises par X25519 + HKDF-SHA256, empreintes identiques à l'app Brocolis.",
+            "AES-256-GCM et jetons de la messagerie Brocolis, clés remises par X25519 + HKDF-SHA256, empreintes identiques à l'app Brocolis. En plus, chaque envoi est signé (Ed25519) et numéroté.",
         ),
         (
             "📦",
@@ -260,7 +260,7 @@ pub static FR: Texts = Texts {
         ),
         (
             "Comment inviter quelqu'un dans un salon privé ?",
-            "Touchez 🔗 dans le salon : le lien marche tant que le salon existe, c'est-à-dire tant que quelqu'un y est, et jusqu'à minuit.",
+            "Touchez 🔗 dans le salon : le lien marche tant que le salon existe, c'est-à-dire jusqu'à minuit, même s'il est vide.",
         ),
     ],
     footer_made: "Écrit avec Paquets 📦 · chiffré avec Brocolis 🥦",
@@ -271,22 +271,22 @@ pub static FR: Texts = Texts {
     notfound_lead: "Cette ruelle ne mène nulle part : la page demandée n'existe pas.",
     notfound_back: "Retour à l'accueil",
     manifest_name: "Alley — messagerie chiffrée",
-    manifest_description: "Salons éphémères chiffrés de bout en bout : rien n'est enregistré, tout s'efface à minuit.",
+    manifest_description: "Salons éphémères chiffrés de bout en bout : aucun message enregistré, tout s'efface à minuit.",
 };
 
 pub static EN: Texts = Texts {
     locale: "en_US",
     title: "Alley — ephemeral, end-to-end encrypted chat rooms",
-    description: "Alley: ephemeral chat rooms, end-to-end encrypted. A nickname is all you need; nothing is stored, and everything disappears at midnight. Messages, photos, voice notes and video calls on iPhone, Android, Windows, macOS and Linux.",
+    description: "Alley: ephemeral chat rooms, end-to-end encrypted. A nickname is all you need; no message is stored, and everything disappears at midnight. Messages, photos, voice notes and video calls on iPhone, Android, Windows, macOS and Linux.",
     language: "Language",
     home_label: "Alley, home",
     nav_features: "Features",
     nav_security: "Security",
     nav_install: "Install",
     open_app: "Open Alley",
-    eyebrow: "🔒 End-to-end encrypted · Nothing is stored · Free",
+    eyebrow: "🔒 End-to-end encrypted and signed · No message stored · Free",
     headline: "Talk. At midnight, it's all gone.",
-    lead: "Alley gives you lightweight chat rooms: pick a nickname and you're in. A room only lives while someone is in it, nobody sees what was said before they arrived, and at midnight nothing is left — not on the server, not on your phone.",
+    lead: "Alley gives you lightweight chat rooms: pick a nickname and you're in. A room stays open until midnight, and you go back to it in one tap; nobody sees what was said before they arrived, and at midnight nothing is left — not on the server, not on your phone.",
     cta_enter: "Enter Alley",
     cta_how: "How it works",
     hero_hint: "In your browser, and installable as an app on iPhone, iPad, Android, Windows, macOS, Linux and ChromeOS.",
@@ -308,7 +308,7 @@ pub static EN: Texts = Texts {
         (
             "🔑",
             "Your rooms follow you",
-            "Signed in, you find the rooms you joined on all your devices, for as long as they exist. Your password never leaves your device.",
+            "The rooms you create or visit stay in your lobby until midnight, with their server: you go back in one tap. Signed in, they follow you on all your devices; your password never leaves yours.",
         ),
         (
             "🔎",
@@ -318,7 +318,7 @@ pub static EN: Texts = Texts {
         (
             "🌱",
             "Living rooms",
-            "A room exists as long as someone is in it. The last one to leave takes it away.",
+            "A room stays open until midnight, even when everyone has left: come back whenever you like. Messages, however, are never kept.",
         ),
         (
             "🙈",
@@ -353,22 +353,22 @@ pub static EN: Texts = Texts {
         ),
         (
             "Everything is encrypted before it leaves",
-            "Messages, nicknames, photos, voice notes and call setup become [[BROCOLIS:v1:…]] tokens that the server relays without being able to read them. Only photos are shown to it for a moment, just long enough to check they are allowed.",
+            "Messages, nicknames, photos, voice notes and call setup become [[BROCOLIS:v1:…]] tokens, encrypted and signed by their author (Ed25519): the server relays them without being able to read or alter them, and anything altered, replayed or attributed to someone else is discarded. Only photos are shown to it for a moment, just long enough to check they are allowed.",
         ),
         (
-            "Nothing is kept",
+            "No message is kept",
             "The server stores no messages: absent people receive nothing, latecomers see nothing from before. Your password never leaves your device.",
         ),
         (
             "Check the fingerprint",
-            "Each room shows its key fingerprint (e.g. 4BB0-6F8E-4E3A-7715): identical for everyone present means nobody is listening in between.",
+            "Each room shows its key fingerprint (e.g. 4BB0-6F8E-4E3A-7715): identical for everyone present means nobody is listening in between. Hover a member to see their signing key fingerprint.",
         ),
     ],
     tech: [
         (
             "🥦",
             "The Brocolis protocol",
-            "AES-256-GCM and the Brocolis messenger's tokens, keys handed over with X25519 + HKDF-SHA256, fingerprints identical to the Brocolis app.",
+            "AES-256-GCM and the Brocolis messenger's tokens, keys handed over with X25519 + HKDF-SHA256, fingerprints identical to the Brocolis app. On top of that, everything sent is signed (Ed25519) and numbered.",
         ),
         (
             "📦",
@@ -438,7 +438,7 @@ pub static EN: Texts = Texts {
         ),
         (
             "How do I invite someone to a private room?",
-            "Tap 🔗 in the room: the link works as long as the room exists, that is as long as someone is in it, and until midnight.",
+            "Tap 🔗 in the room: the link works as long as the room exists, that is until midnight, even when it is empty.",
         ),
     ],
     footer_made: "Built with Paquets 📦 · encrypted with Brocolis 🥦",
@@ -449,22 +449,22 @@ pub static EN: Texts = Texts {
     notfound_lead: "This alley leads nowhere: the page you asked for doesn't exist.",
     notfound_back: "Back to the home page",
     manifest_name: "Alley — encrypted chat",
-    manifest_description: "Ephemeral end-to-end encrypted chat rooms: nothing is stored, everything is erased at midnight.",
+    manifest_description: "Ephemeral end-to-end encrypted chat rooms: no message stored, everything is erased at midnight.",
 };
 
 pub static ES: Texts = Texts {
     locale: "es_ES",
     title: "Alley — salas efímeras, cifradas de extremo a extremo",
-    description: "Alley: salas de chat efímeras, cifradas de extremo a extremo. Basta con un seudónimo; no se guarda nada y todo desaparece a medianoche. Mensajes, fotos, notas de voz y videollamadas en iPhone, Android, Windows, macOS y Linux.",
+    description: "Alley: salas de chat efímeras, cifradas de extremo a extremo. Basta con un seudónimo; no se guarda ningún mensaje y todo desaparece a medianoche. Mensajes, fotos, notas de voz y videollamadas en iPhone, Android, Windows, macOS y Linux.",
     language: "Idioma",
     home_label: "Alley, inicio",
     nav_features: "Funciones",
     nav_security: "Seguridad",
     nav_install: "Instalar",
     open_app: "Abrir Alley",
-    eyebrow: "🔒 Cifrado de extremo a extremo · No se guarda nada · Gratis",
+    eyebrow: "🔒 Cifrado y firmado de extremo a extremo · Ningún mensaje guardado · Gratis",
     headline: "Hablamos. A medianoche, todo se borra.",
-    lead: "Alley son salas de chat ligeras: un seudónimo y listo. Una sala solo vive mientras haya alguien dentro, nadie ve lo que se dijo antes de su llegada, y a medianoche no queda nada — ni en el servidor, ni en tu teléfono.",
+    lead: "Alley son salas de chat ligeras: un seudónimo y listo. Una sala sigue abierta hasta medianoche y vuelves a ella con un toque; nadie ve lo que se dijo antes de su llegada, y a medianoche no queda nada — ni en el servidor, ni en tu teléfono.",
     cta_enter: "Entrar en Alley",
     cta_how: "Cómo funciona",
     hero_hint: "En el navegador, e instalable como una app en iPhone, iPad, Android, Windows, macOS, Linux y ChromeOS.",
@@ -486,7 +486,7 @@ pub static ES: Texts = Texts {
         (
             "🔑",
             "Tus salas te siguen",
-            "Con la sesión iniciada, encuentras en todos tus dispositivos las salas en las que estuviste, mientras existan. Tu contraseña nunca sale de tu dispositivo.",
+            "Las salas que creas o visitas se quedan en tu vestíbulo hasta medianoche, con su servidor: vuelves con un toque. Con la sesión iniciada, te siguen en todos tus dispositivos; tu contraseña nunca sale del tuyo.",
         ),
         (
             "🔎",
@@ -495,8 +495,8 @@ pub static ES: Texts = Texts {
         ),
         (
             "🌱",
-            "Salas vivas",
-            "Una sala existe mientras haya alguien dentro. El último en salir se la lleva consigo.",
+            "Salas a las que volver",
+            "Una sala sigue abierta hasta medianoche, aunque todos se hayan ido: vuelve cuando quieras. Los mensajes, en cambio, nunca se guardan.",
         ),
         (
             "🙈",
@@ -531,22 +531,22 @@ pub static ES: Texts = Texts {
         ),
         (
             "Todo se cifra antes de salir",
-            "Mensajes, seudónimos, fotos, notas de voz y el establecimiento de las llamadas se convierten en fichas [[BROCOLIS:v1:…]] que el servidor transmite sin poder leerlas. Solo las fotos se le muestran un instante, el tiempo de comprobar que están permitidas.",
+            "Mensajes, seudónimos, fotos, notas de voz y el establecimiento de las llamadas se convierten en fichas [[BROCOLIS:v1:…]], cifradas y firmadas por su autor (Ed25519): el servidor las transmite sin poder ni leerlas ni modificarlas, y todo envío alterado, repetido o atribuido a otro se descarta. Solo las fotos se le muestran un instante, el tiempo de comprobar que están permitidas.",
         ),
         (
-            "No se guarda nada",
+            "Ningún mensaje guardado",
             "El servidor no almacena ningún mensaje: los ausentes no reciben nada, los que llegan tarde no ven nada de antes. Tu contraseña nunca sale de tu dispositivo.",
         ),
         (
             "Comprueba la huella",
-            "Cada sala muestra la huella de su clave (p. ej. 4BB0-6F8E-4E3A-7715): si es idéntica para todos los presentes, nadie se ha interpuesto.",
+            "Cada sala muestra la huella de su clave (p. ej. 4BB0-6F8E-4E3A-7715): si es idéntica para todos los presentes, nadie se ha interpuesto. Pasa el cursor sobre un miembro para ver la huella de su clave de firma.",
         ),
     ],
     tech: [
         (
             "🥦",
             "El protocolo Brocolis",
-            "AES-256-GCM y las fichas de la mensajería Brocolis, claves entregadas con X25519 + HKDF-SHA256, huellas idénticas a las de la app Brocolis.",
+            "AES-256-GCM y las fichas de la mensajería Brocolis, claves entregadas con X25519 + HKDF-SHA256, huellas idénticas a las de la app Brocolis. Además, cada envío va firmado (Ed25519) y numerado.",
         ),
         (
             "📦",
@@ -616,7 +616,7 @@ pub static ES: Texts = Texts {
         ),
         (
             "¿Cómo invito a alguien a una sala privada?",
-            "Toca 🔗 en la sala: el enlace funciona mientras la sala exista, es decir, mientras haya alguien dentro, y hasta medianoche.",
+            "Toca 🔗 en la sala: el enlace funciona mientras la sala exista, es decir, hasta medianoche, aunque esté vacía.",
         ),
     ],
     footer_made: "Hecho con Paquets 📦 · cifrado con Brocolis 🥦",
@@ -627,5 +627,5 @@ pub static ES: Texts = Texts {
     notfound_lead: "Este callejón no lleva a ninguna parte: la página que buscas no existe.",
     notfound_back: "Volver al inicio",
     manifest_name: "Alley — mensajería cifrada",
-    manifest_description: "Salas efímeras cifradas de extremo a extremo: no se guarda nada, todo se borra a medianoche.",
+    manifest_description: "Salas efímeras cifradas de extremo a extremo: ningún mensaje guardado, todo se borra a medianoche.",
 };

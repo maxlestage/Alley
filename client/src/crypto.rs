@@ -10,14 +10,22 @@
 //!   ainsi que la clé d'un salon est remise à chaque nouvel arrivant ;
 //! - empreinte : 8 premiers octets de SHA-256, en hexa groupé par 4.
 //!
-//! S'y ajoutent, pour Alley, les identifiants dérivés d'une clé.
+//! S'y ajoutent, pour Alley, les identifiants dérivés d'une clé, et les
+//! **signatures** : chaque membre signe tout ce qu'il envoie avec une clé
+//! Ed25519 tirée pour le salon ([`Signer`], [`seal_signed`],
+//! [`open_signed`]). Le chiffrement empêche le serveur de lire ou de
+//! fabriquer un message ; la signature garantit en plus *qui* l'a écrit, et
+//! qu'il n'a été ni modifié, ni rejoué, ni détourné vers un autre salon ou
+//! un autre destinataire.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
 use hkdf::Hkdf;
 use rand_core::{OsRng, RngCore};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -253,6 +261,149 @@ impl Identity {
     }
 }
 
+/// Le domaine des signatures d'Alley : une signature faite ici ne vaut rien
+/// ailleurs.
+const SIG_DOMAIN: &[u8] = b"alley-sig-v1";
+
+/// Une clé de signature Ed25519, tirée pour le salon (comme l'identité
+/// X25519) : sa moitié publique est annoncée en entrant, et chacun vérifie
+/// avec elle tout ce que l'on envoie.
+pub struct Signer(SigningKey);
+
+impl Signer {
+    pub fn generate() -> Self {
+        Signer(SigningKey::from_bytes(&random_bytes::<32>()))
+    }
+
+    pub fn public_raw(&self) -> [u8; 32] {
+        self.0.verifying_key().to_bytes()
+    }
+
+    pub fn public_b64(&self) -> String {
+        b64(&self.public_raw())
+    }
+}
+
+/// Ce qui est signé : le domaine, le salon, le destinataire (vide : tout le
+/// salon), le numéro d'ordre de l'envoi, puis le contenu, séparés par des
+/// zéros (aucun ne peut en contenir : identifiants hexadécimaux, JSON).
+fn signed_bytes(room: &str, to: &str, n: u64, body: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(SIG_DOMAIN.len() + room.len() + to.len() + body.len() + 11);
+    for part in [SIG_DOMAIN, room.as_bytes(), to.as_bytes()] {
+        out.extend_from_slice(part);
+        out.push(0);
+    }
+    out.extend_from_slice(&n.to_be_bytes());
+    out.extend_from_slice(body.as_bytes());
+    out
+}
+
+/// Chiffre un contenu signé : le jeton porte `{"b": contenu, "to", "n",
+/// "sig"}`. `n` augmente à chaque envoi (une fois envoyé, un numéro ne
+/// resert jamais).
+pub fn seal_signed(
+    key: &Key,
+    signer: &Signer,
+    room: &str,
+    to: Option<&str>,
+    n: u64,
+    body: &str,
+) -> String {
+    let to = to.unwrap_or_default();
+    let sig = signer.0.sign(&signed_bytes(room, to, n, body));
+    let envelope = json!({ "b": body, "to": to, "n": n, "sig": b64(&sig.to_bytes()) });
+    seal_token(key, &envelope.to_string())
+}
+
+/// Les numéros d'envoi déjà vus d'un membre : chacun ne passe qu'une fois.
+/// Les envois peuvent arriver dans le désordre (une photo attend sa
+/// vérification par le serveur pendant que la suite passe) : on retient les
+/// numéros vus dans une fenêtre sous le plus grand, et tout ce qui est plus
+/// ancien que la fenêtre est refusé.
+#[derive(Clone, Debug, Default)]
+pub struct Replay {
+    max: u64,
+    seen: std::collections::BTreeSet<u64>,
+}
+
+impl Replay {
+    /// La largeur de la fenêtre, en envois.
+    pub const WINDOW: u64 = 4096;
+
+    /// `n` n'a jamais été vu (et n'est pas trop ancien pour le savoir).
+    pub fn fresh(&self, n: u64) -> bool {
+        n > 0 && n + Self::WINDOW > self.max && !self.seen.contains(&n)
+    }
+
+    /// Retient `n`.
+    pub fn mark(&mut self, n: u64) {
+        self.seen.insert(n);
+        self.max = self.max.max(n);
+        let floor = self.max.saturating_sub(Self::WINDOW);
+        self.seen = self.seen.split_off(&floor);
+    }
+}
+
+/// Pourquoi un jeton reçu est écarté.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejected {
+    /// Pas pour nous : autre clé, ou jeton abîmé.
+    Unreadable,
+    /// L'expéditeur n'a annoncé aucune clé de signature.
+    Unsigned,
+    /// La signature ne correspond pas : contenu modifié, ou pas de lui.
+    Forged,
+    /// Un numéro déjà vu : un envoi rejoué.
+    Replayed,
+    /// Signé pour quelqu'un d'autre.
+    Misdirected,
+}
+
+/// Ouvre un jeton signé reçu de quelqu'un dont la clé publique (base64) est
+/// `signer`, dans le salon `room`, par moi (`me`), quand `seen` tient les
+/// numéros déjà vus de lui. Renvoie le contenu et son numéro (à retenir dans
+/// `seen` une fois le contenu accepté).
+pub fn open_signed(
+    key: &Key,
+    token: &str,
+    signer: Option<&str>,
+    room: &str,
+    me: &str,
+    seen: &Replay,
+) -> Result<(String, u64), Rejected> {
+    let clear = open_token(key, token).ok_or(Rejected::Unreadable)?;
+    let envelope: Value = serde_json::from_str(&clear).map_err(|_| Rejected::Unreadable)?;
+    let public: [u8; 32] = signer
+        .and_then(unb64)
+        .and_then(|raw| raw.try_into().ok())
+        .ok_or(Rejected::Unsigned)?;
+    let public = VerifyingKey::from_bytes(&public).map_err(|_| Rejected::Unsigned)?;
+    let (Some(body), Some(to), Some(n), Some(sig)) = (
+        envelope["b"].as_str(),
+        envelope["to"].as_str(),
+        envelope["n"].as_u64(),
+        envelope["sig"].as_str(),
+    ) else {
+        return Err(Rejected::Forged);
+    };
+    let sig: [u8; 64] = unb64(sig)
+        .and_then(|raw| raw.try_into().ok())
+        .ok_or(Rejected::Forged)?;
+    public
+        .verify_strict(
+            &signed_bytes(room, to, n, body),
+            &Signature::from_bytes(&sig),
+        )
+        .map_err(|_| Rejected::Forged)?;
+    if !to.is_empty() && to != me {
+        return Err(Rejected::Misdirected);
+    }
+    if !seen.fresh(n) {
+        return Err(Rejected::Replayed);
+    }
+    Ok((body.to_owned(), n))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,5 +478,102 @@ mod tests {
         );
         let back = Identity::from_b64(&member.secret_b64()).unwrap();
         assert_eq!(back.public_b64(), member.public_b64());
+    }
+
+    #[test]
+    fn signed_tokens_reject_any_change() {
+        let key = generate_key();
+        let (ada, eve) = (Signer::generate(), Signer::generate());
+        let ada_pub = ada.public_b64();
+        let fresh = Replay::default();
+        let mut seen_one = Replay::default();
+        seen_one.mark(1);
+        let open = |token: &str, signer: &str, room: &str, me: &str, seen: &Replay| {
+            open_signed(&key, token, Some(signer), room, me, seen)
+        };
+        let token = seal_signed(&key, &ada, "salon", None, 1, r#"{"k":"msg","x":"salut"}"#);
+        assert_eq!(
+            open(&token, &ada_pub, "salon", "bob", &fresh),
+            Ok((r#"{"k":"msg","x":"salut"}"#.to_owned(), 1))
+        );
+        // Une autre clé que celle annoncée par l'expéditeur.
+        assert_eq!(
+            open(&token, &eve.public_b64(), "salon", "bob", &fresh),
+            Err(Rejected::Forged)
+        );
+        // Sans clé annoncée, rien ne passe.
+        assert_eq!(
+            open_signed(&key, &token, None, "salon", "bob", &fresh),
+            Err(Rejected::Unsigned)
+        );
+        // Rejoué dans un autre salon, ou une seconde fois.
+        assert_eq!(
+            open(&token, &ada_pub, "autre", "bob", &fresh),
+            Err(Rejected::Forged)
+        );
+        assert_eq!(
+            open(&token, &ada_pub, "salon", "bob", &seen_one),
+            Err(Rejected::Replayed)
+        );
+        // Un membre (qui a la clé du salon) modifie le contenu, le numéro ou
+        // le destinataire : la signature ne correspond plus.
+        let clear = open_token(&key, &token).unwrap();
+        for (field, value) in [
+            ("b", json!(r#"{"k":"msg","x":"modifié"}"#)),
+            ("n", json!(7)),
+            ("to", json!("bob")),
+        ] {
+            let mut envelope: Value = serde_json::from_str(&clear).unwrap();
+            envelope[field] = value;
+            let altered = seal_token(&key, &envelope.to_string());
+            assert_eq!(
+                open(&altered, &ada_pub, "salon", "bob", &fresh),
+                Err(Rejected::Forged),
+                "{field}"
+            );
+        }
+        // Un envoi pour Carl n'est pas pour Bob.
+        let private = seal_signed(&key, &ada, "salon", Some("carl"), 2, "{}");
+        assert_eq!(
+            open(&private, &ada_pub, "salon", "bob", &fresh),
+            Err(Rejected::Misdirected)
+        );
+        assert!(open(&private, &ada_pub, "salon", "carl", &seen_one).is_ok());
+        // Un jeton non signé (l'ancien format) est écarté.
+        let bare = seal_token(&key, r#"{"k":"msg","x":"salut"}"#);
+        assert_eq!(
+            open(&bare, &ada_pub, "salon", "bob", &fresh),
+            Err(Rejected::Forged)
+        );
+        assert_eq!(
+            open_signed(
+                &generate_key(),
+                &token,
+                Some(&ada_pub),
+                "salon",
+                "bob",
+                &fresh
+            ),
+            Err(Rejected::Unreadable)
+        );
+    }
+
+    #[test]
+    fn each_number_passes_once_even_out_of_order() {
+        let mut seen = Replay::default();
+        assert!(!seen.fresh(0), "0 n'est jamais émis");
+        for n in [1, 2, 5, 3] {
+            assert!(seen.fresh(n), "{n}");
+            seen.mark(n);
+        }
+        // 4 arrive en retard (une photo vérifiée) : il passe, une fois.
+        assert!(seen.fresh(4));
+        seen.mark(4);
+        assert!(!seen.fresh(4) && !seen.fresh(2));
+        // Trop ancien pour savoir s'il a été vu : refusé.
+        seen.mark(10 + Replay::WINDOW);
+        assert!(!seen.fresh(9));
+        assert!(seen.fresh(11) && seen.fresh(11 + Replay::WINDOW));
+        assert!(seen.seen.len() <= 2, "la mémoire reste bornée");
     }
 }
