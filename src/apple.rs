@@ -24,9 +24,9 @@ use crate::billing::{Pass, period_end, plan};
 /// L'autorité racine d'Apple (valable jusqu'en 2039).
 pub const APPLE_ROOT_G3: &[u8] = include_bytes!("AppleRootCA-G3.cer");
 
-/// Les produits de l'App Store : `app.alley.ios.period.3d`, `….7d`, `….1m`,
+/// Les produits de l'App Store : `com.maxlestage.alley.period.3d`, `….7d`, `….1m`,
 /// `….3m` (abonnements non renouvelables : une période, payée une fois).
-pub const PRODUCT_PREFIX: &str = "app.alley.ios.period.";
+pub const PRODUCT_PREFIX: &str = "com.maxlestage.alley.period.";
 
 const ECDSA_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.2");
 const ECDSA_SHA384: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.10045.4.3.3");
@@ -205,7 +205,7 @@ pub fn verify_jws(jws: &str, root: &[u8]) -> Result<Value, &'static str> {
 
 /// L'identifiant de l'application iOS (`ALLEY_IOS_BUNDLE_ID`).
 pub fn bundle_id() -> String {
-    std::env::var("ALLEY_IOS_BUNDLE_ID").unwrap_or_else(|_| "app.alley.ios".into())
+    std::env::var("ALLEY_IOS_BUNDLE_ID").unwrap_or_else(|_| "com.maxlestage.alley".into())
 }
 
 /// Les achats de test (TestFlight, bac à sable d'Apple) ouvrent-ils des
@@ -322,7 +322,7 @@ pub mod tests {
         serde_json::json!({
             "transactionId": "2000000123456789",
             "originalTransactionId": "2000000123456789",
-            "bundleId": "app.alley.ios",
+            "bundleId": "com.maxlestage.alley",
             "productId": format!("{PRODUCT_PREFIX}{product}"),
             "purchaseDate": purchase,
             "signedDate": purchase + 1000,

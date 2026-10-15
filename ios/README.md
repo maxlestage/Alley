@@ -59,10 +59,10 @@ Un Mac de GitHub compile l'application, la signe et l'envoie sur TestFlight (wor
    - `ASC_KEY_ID` : l'ID de la clé ;
    - `ASC_ISSUER_ID` : l'Issuer ID ;
    - `ASC_KEY` : tout le texte du fichier, de `-----BEGIN PRIVATE KEY-----` à `-----END PRIVATE KEY-----`.
-4. **Premier lancement.** *Actions* → *TestFlight* → *Run workflow*. Il enregistre l'identifiant `app.alley.ios`, puis s'arrête en demandant de créer l'app.
+4. **Premier lancement.** *Actions* → *TestFlight* → *Run workflow*. Il enregistre l'identifiant `com.maxlestage.alley`, puis s'arrête en demandant de créer l'app.
 5. **L'app dans App Store Connect.** *Apps* → **+** → *Nouvelle app* :
    - plateforme iOS, nom « Alley », langue Français ;
-   - identifiant de bundle `app.alley.ios`, SKU `alley`.
+   - identifiant de bundle `com.maxlestage.alley`, SKU `alley`.
 
    Puis relancez le workflow. Il compile, signe et envoie l'app, et ajoute toute l'équipe aux testeurs internes.
 6. **Sur l'iPhone.** Installez l'app *TestFlight* depuis l'App Store. Après le traitement par Apple (10 à 30 minutes), Alley y apparaît : *Installer*.
@@ -86,7 +86,7 @@ cd ios && xcodegen && open Alley.xcodeproj
 Choisissez votre équipe dans *Signing & Capabilities*, puis lancez sur un simulateur ou sur votre iPhone. Le serveur et l'adresse de contact (signalements) se règlent dans `Alley/Info.plist` (`AlleyServer`, `AlleyContact`).
 
 Avant de publier sur l'App Store :
-- Changez l'identifiant `app.alley.ios` dans `project.yml` si besoin.
+- Changez l'identifiant `com.maxlestage.alley` dans `project.yml` si besoin.
 - Répondez à la question sur le chiffrement dans App Store Connect : Alley utilise des algorithmes standard (AES-GCM, X25519, Ed25519) pour chiffrer les messages de bout en bout.
 
 ## Tests

@@ -13,7 +13,7 @@ import SwiftUI
 @MainActor
 @Observable
 final class Shop {
-    static let prefix = "app.alley.ios.period."
+    static let prefix = "com.maxlestage.alley.period."
     static let plans = ["3d", "7d", "1m", "3m"]
 
     var products: [Product] = []
