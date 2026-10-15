@@ -63,6 +63,7 @@ struct L10n {
     var closedMidnight, closedExpelled, closedBanned, closedGone, connectionLost: String
     var errNetwork, errGeneric, errRate, errTooManyRooms, storageTampered, banned: String
     var encrypted, reportSubject, reportBody, reportMessageBody, toBottom: String
+    var callTitle, joinCall, leaveCall, callOngoing, muteMic, unmuteMic, cameraOn, cameraOff, switchCamera, speakerLabel, micDenied, recordVoice, stopRecording, cancelRecording, inCall, connecting, noCallMembers: String
 }
 
 extension L10n {
@@ -127,7 +128,8 @@ extension L10n {
         banned: "Cette connexion est bloquée.", encrypted: "Chiffré de bout en bout",
         reportSubject: "Signalement — salon « {} »",
         reportBody: "Salon : {}\nIdentifiant : {}\nDate et heure : {}\n\nCe qui s'est passé :\n\n",
-        reportMessageBody: "Message signalé — de {} :\n« {} »\n\n", toBottom: "Revenir aux derniers messages")
+        reportMessageBody: "Message signalé — de {} :\n« {} »\n\n", toBottom: "Revenir aux derniers messages",
+        callTitle: "Appel", joinCall: "Rejoindre l'appel", leaveCall: "Raccrocher", callOngoing: "Appel en cours", muteMic: "Couper le micro", unmuteMic: "Réactiver le micro", cameraOn: "Activer la caméra", cameraOff: "Couper la caméra", switchCamera: "Changer de caméra", speakerLabel: "Haut-parleur", micDenied: "Autorisez le micro dans Réglages → Alley.", recordVoice: "Enregistrer un message vocal", stopRecording: "Envoyer le message vocal", cancelRecording: "Annuler", inCall: "dans l'appel", connecting: "connexion…", noCallMembers: "Vous êtes seul dans l'appel : les autres peuvent vous rejoindre.")
 
     static let en = L10n(
         tagline: "Chat in rooms, end-to-end encrypted. Nothing is kept: at midnight, everything disappears.",
@@ -190,7 +192,8 @@ extension L10n {
         banned: "This connection is blocked.", encrypted: "End-to-end encrypted",
         reportSubject: "Report — room “{}”",
         reportBody: "Room: {}\nIdentifier: {}\nDate and time: {}\n\nWhat happened:\n\n",
-        reportMessageBody: "Reported message — from {}:\n“{}”\n\n", toBottom: "Back to the latest messages")
+        reportMessageBody: "Reported message — from {}:\n“{}”\n\n", toBottom: "Back to the latest messages",
+        callTitle: "Call", joinCall: "Join the call", leaveCall: "Hang up", callOngoing: "Call in progress", muteMic: "Mute", unmuteMic: "Unmute", cameraOn: "Turn camera on", cameraOff: "Turn camera off", switchCamera: "Switch camera", speakerLabel: "Speaker", micDenied: "Allow the microphone in Settings → Alley.", recordVoice: "Record a voice message", stopRecording: "Send the voice message", cancelRecording: "Cancel", inCall: "in the call", connecting: "connecting…", noCallMembers: "You're alone in the call: others can join you.")
 
     static let es = L10n(
         tagline: "Chatea en salas, cifrado de extremo a extremo. No se guarda nada: a medianoche, todo desaparece.",
@@ -253,5 +256,6 @@ extension L10n {
         banned: "Esta conexión está bloqueada.", encrypted: "Cifrado de extremo a extremo",
         reportSubject: "Denuncia — sala «{}»",
         reportBody: "Sala: {}\nIdentificador: {}\nFecha y hora: {}\n\nLo que pasó:\n\n",
-        reportMessageBody: "Mensaje denunciado — de {}:\n«{}»\n\n", toBottom: "Volver a los últimos mensajes")
+        reportMessageBody: "Mensaje denunciado — de {}:\n«{}»\n\n", toBottom: "Volver a los últimos mensajes",
+        callTitle: "Llamada", joinCall: "Unirse a la llamada", leaveCall: "Colgar", callOngoing: "Llamada en curso", muteMic: "Silenciar el micrófono", unmuteMic: "Activar el micrófono", cameraOn: "Activar la cámara", cameraOff: "Apagar la cámara", switchCamera: "Cambiar de cámara", speakerLabel: "Altavoz", micDenied: "Permite el micrófono en Ajustes → Alley.", recordVoice: "Grabar un mensaje de voz", stopRecording: "Enviar el mensaje de voz", cancelRecording: "Cancelar", inCall: "en la llamada", connecting: "conectando…", noCallMembers: "Estás solo en la llamada: los demás pueden unirse.")
 }
