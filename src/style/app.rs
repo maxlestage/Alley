@@ -1546,6 +1546,16 @@ pub fn app() -> String {
         ],
     );
     s.rule(".icon-btn.off", &[("color", "var(--danger)")]);
+    // Le lien « Signaler » a l'allure des autres boutons.
+    s.rule(
+        "a.icon-btn",
+        &[
+            ("display", "inline-grid"),
+            ("place-items", "center"),
+            ("text-decoration", "none"),
+            ("color", "inherit"),
+        ],
+    );
     s.rule(
         ".icon-btn.hangup, .call-controls .hangup",
         &[("color", "#fff"), ("background", "var(--danger)")],
@@ -2035,6 +2045,38 @@ pub fn app() -> String {
         &[("padding", "8px 0"), ("text-align", "left")],
     );
     s.rule(".mine[hidden], .mine [hidden]", &[("display", "none")]);
+    // Le bas du hall : aide, règles, conditions, contact.
+    s.rule(
+        ".app-footer",
+        &[
+            ("display", "flex"),
+            ("flex-wrap", "wrap"),
+            ("justify-content", "center"),
+            ("gap", "6px 18px"),
+            ("margin", "28px 0 8px"),
+            ("padding-top", "16px"),
+            ("border-top", "1px solid var(--line)"),
+            ("font-size", "14px"),
+        ],
+    );
+    s.rule(
+        ".app-footer a",
+        &[("color", "var(--muted)"), ("text-decoration", "none")],
+    );
+    s.rule(
+        ".app-footer a:hover, .app-footer a:focus-visible",
+        &[("color", "var(--fg)"), ("text-decoration", "underline")],
+    );
+    s.rule(".accept a, .consent a", &[("color", "var(--accent)")]);
+    s.rule(
+        ".consent",
+        &[
+            ("align-items", "flex-start"),
+            ("margin-top", "4px"),
+            ("line-height", "1.45"),
+        ],
+    );
+    s.rule(".consent input", &[("margin-top", "3px"), ("flex", "none")]);
     // Les abonnements.
     s.rule(
         ".plans",

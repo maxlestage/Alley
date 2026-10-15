@@ -29,6 +29,7 @@ pub mod assets;
 pub mod billing;
 pub mod export;
 pub mod i18n;
+pub mod legal;
 pub mod moderation;
 pub mod pages;
 pub mod protocol;
