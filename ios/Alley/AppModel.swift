@@ -5,6 +5,7 @@
 import AlleyKit
 import Foundation
 import Observation
+import StoreKit
 
 @MainActor
 @Observable
@@ -32,6 +33,12 @@ final class AppModel {
     var room: RoomSession?
     /// L'appel en cours dans ce salon.
     var call: CallEngine?
+    /// Les périodes payantes (achats intégrés).
+    let shop = Shop()
+    /// L'achat sur iPhone du compte (`apple:<transaction>`), et la fin de sa
+    /// période en cours.
+    @ObservationIgnored var applePayment: String?
+    var periodEnd: Date?
     var banned = false
     /// Le bandeau du moment.
     var toast: Toast?
@@ -110,6 +117,8 @@ final class AppModel {
         pseudonym = ""
         account = nil
         mine = []
+        periodEnd = nil
+        applePayment = nil
         vault.accountKey = nil
         recents = vault.recents()
     }
@@ -128,6 +137,31 @@ final class AppModel {
             mine = list
         }
         await loadKnown()
+        await loadPeriod()
+    }
+
+    /// La période payée du compte (achetée sur iPhone ou sur le site).
+    func loadPeriod() async {
+        guard let account else {
+            periodEnd = nil
+            return
+        }
+        applePayment = await shop.payment(for: account)
+        periodEnd = await api.periodEnd(account, payment: applePayment)
+    }
+
+    /// Achète une période (achat intégré), puis la fait vérifier au serveur.
+    func buy(_ product: Product) async {
+        guard let account else { return }
+        switch await shop.buy(product, account: account) {
+        case nil:
+            await loadPeriod()
+            show(periodEnd == nil ? fill(t.purchaseFailed, "?") : t.purchased, error: periodEnd == nil)
+        case "":
+            break
+        case let error?:
+            show(fill(t.purchaseFailed, error), error: true)
+        }
     }
 
     /// Les salons de l'appareil : ceux que le serveur connaît encore (il
@@ -191,7 +225,7 @@ final class AppModel {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if Moderation.check(name) != nil { return show(t.forbiddenName, error: true) }
         do {
-            let info = try await api.create(name: name, isPrivate: isPrivate, account: account)
+            let info = try await api.create(name: name, isPrivate: isPrivate, account: account, payment: applePayment)
             vault.remember(info, server: serverName, created: true)
             await join(info.id)
         } catch let e as APIError {
