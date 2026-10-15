@@ -125,7 +125,7 @@ final class CallEngine {
         room.onSignal = nil
         room.onCallChanged = nil
         for id in Array(links.keys) { drop(id) }
-        capturer?.stopCapture()
+        capturer?.stopCapture(completionHandler: nil)
         capturer = nil
         localVideo = nil
         audioTrack = nil
@@ -285,7 +285,7 @@ final class CallEngine {
     /// La caméra (avant par défaut) : partagée avec tous les membres.
     func toggleCamera() async {
         if camera {
-            capturer?.stopCapture()
+            capturer?.stopCapture(completionHandler: nil)
             capturer = nil
             localVideo = nil
         } else {
