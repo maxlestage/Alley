@@ -126,6 +126,7 @@ pub fn merge() -> Result<(), String> {
         "user.email",
         "41898282+github-actions[bot]@users.noreply.github.com",
     ])?;
+    let before = git(&["rev-parse", "HEAD"])?;
     if git(&["merge-base", "--is-ancestor", &sha, "HEAD"]).is_ok() {
         println!("{branch} est déjà dans master.");
     } else {
@@ -135,7 +136,14 @@ pub fn merge() -> Result<(), String> {
         println!("::notice title=Fusion automatique::{branch} fusionnée dans master");
     }
     dispatch("heroku.yml")?;
-    dispatch("pages.yml")
+    dispatch("pages.yml")?;
+    // L'application iOS a changé : une nouvelle version pour TestFlight (le
+    // workflow ne fait rien tant que ses secrets manquent).
+    let ios = ["ios", ".github/workflows/testflight.yml"];
+    if git(&[&["diff", "--quiet", &before, "HEAD", "--"][..], &ios[..]].concat()).is_err() {
+        dispatch("testflight.yml")?;
+    }
+    Ok(())
 }
 
 pub fn pages_enabled() -> Result<(), String> {
