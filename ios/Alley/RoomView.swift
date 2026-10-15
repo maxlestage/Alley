@@ -24,6 +24,7 @@ struct RoomView: View {
     var body: some View {
         let t = model.t
         VStack(spacing: 0) {
+            CallPanel(room: room)
             messages
             if !room.typing.isEmpty {
                 Text(fill(room.typing.count == 1 ? t.typingOne : t.typingMany, room.typing.joined(separator: ", ")))
@@ -61,6 +62,13 @@ struct RoomView: View {
                 .accessibilityElement(children: .combine)
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    if model.call == nil { Task { await model.joinCall() } } else { model.leaveCall() }
+                } label: {
+                    Label(model.call == nil ? t.joinCall : t.leaveCall, systemImage: model.call == nil ? "phone" : "phone.down.fill")
+                }
+                .tint(model.call == nil ? Color.accentColor : Color.red)
+                .accessibilityIdentifier("call-btn")
                 Button { showMembers = true } label: { Label(t.members, systemImage: "person.2") }
                     .accessibilityIdentifier("members-btn")
                 Button { showSettings = true } label: { Label(t.roomSettings, systemImage: "gearshape") }
@@ -231,7 +239,7 @@ struct MessageRow: View {
                     .accessibilityLabel(t.photo)
             }
         case .audio:
-            VoiceNote(data: message.media, label: t.voice)
+            VoiceNote(data: message.media, mime: message.mime, label: t.voice)
         }
     }
 
@@ -331,12 +339,13 @@ struct MessageRow: View {
 /// Un message vocal reçu.
 struct VoiceNote: View {
     let data: Data?
+    let mime: String
     let label: String
     @State private var player = VoicePlayer()
 
     var body: some View {
         Button {
-            player.toggle(data)
+            player.toggle(data, mime: mime)
         } label: {
             Label(label, systemImage: player.playing ? "pause.circle.fill" : "play.circle.fill")
                 .font(.subheadline.weight(.medium))
@@ -359,6 +368,7 @@ struct Composer: View {
     var focused: FocusState<Bool>.Binding
     @State private var photo: PhotosPickerItem?
     @State private var showEmoji = false
+    @State private var recorder = VoiceRecorder()
 
     static let emojis = [
         "😀", "😂", "🥲", "😊", "😍", "🥰", "😘", "😉", "😎", "🤩", "🤔", "🤨", "😐", "🙄", "😴", "😮",
@@ -408,24 +418,71 @@ struct Composer: View {
                     Image(systemName: showEmoji ? "keyboard" : "face.smiling").font(.title3).frame(width: 40, height: 40)
                 }
                 .accessibilityLabel("Emoji")
-                TextField(t.messagePlaceholder, text: $draft, axis: .vertical)
-                    .lineLimit(1...6)
-                    .focused(focused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 20))
-                    .onChange(of: draft) { _, new in if !new.isEmpty { room.typingNow() } }
-                    .accessibilityIdentifier("input")
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.gray.opacity(0.5) : Color.alleyAccent, in: .circle)
+                if recorder.recording {
+                    // L'enregistrement en cours : sa durée, annuler, envoyer.
+                    Button {
+                        recorder.cancel()
+                    } label: {
+                        Image(systemName: "trash").font(.title3).foregroundStyle(.red).frame(width: 40, height: 40)
+                    }
+                    .accessibilityLabel(t.cancelRecording)
+                    TimelineView(.periodic(from: .now, by: 0.5)) { context in
+                        let s = Int(context.date.timeIntervalSince(recorder.started))
+                        Label(String(format: "%d:%02d", s / 60, s % 60), systemImage: "record.circle")
+                            .foregroundStyle(.red)
+                            .font(.body.monospacedDigit())
+                            .frame(maxWidth: .infinity, minHeight: 40)
+                            .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 20))
+                    }
+                    Button {
+                        if let audio = recorder.stop() {
+                            room.sendAudio(audio, mime: "audio/mp4", reply: replyTo)
+                            replyTo = nil
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .frame(width: 40, height: 40)
+                            .background(Color.alleyAccent, in: .circle)
+                    }
+                    .accessibilityLabel(t.stopRecording)
+                    .accessibilityIdentifier("send-voice")
+                } else {
+                    TextField(t.messagePlaceholder, text: $draft, axis: .vertical)
+                        .lineLimit(1...6)
+                        .focused(focused)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 20))
+                        .onChange(of: draft) { _, new in if !new.isEmpty { room.typingNow() } }
+                        .accessibilityIdentifier("input")
+                    if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && editing == nil {
+                        Button {
+                            Task {
+                                if !(await recorder.start()) { model.show(t.micDenied, error: true) }
+                            }
+                        } label: {
+                            Image(systemName: "mic.fill")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Color.alleyAccent, in: .circle)
+                        }
+                        .accessibilityLabel(t.recordVoice)
+                        .accessibilityIdentifier("mic")
+                    } else {
+                        Button(action: send) {
+                            Image(systemName: "arrow.up")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .frame(width: 40, height: 40)
+                                .background(Color.alleyAccent, in: .circle)
+                        }
+                        .accessibilityLabel(t.send)
+                        .accessibilityIdentifier("send")
+                    }
                 }
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel(t.send)
-                .accessibilityIdentifier("send")
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 8)

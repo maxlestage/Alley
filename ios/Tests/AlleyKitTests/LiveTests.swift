@@ -109,6 +109,29 @@ final class LiveTests: XCTestCase {
         bob.sendImage(jpeg)
         try await wait("photo jugée", timeout: 20) { bob.messages.last?.pending == false || bob.notice == .photoRefused("invalid") || bob.notice == .photoRefused("unavailable") }
 
+        // Un message vocal.
+        let voice = Data("faux AAC".utf8)
+        ada.sendAudio(voice, mime: "audio/mp4")
+        try await wait("vocal") { bob.messages.last?.kind == .audio && bob.messages.last?.media == voice && bob.messages.last?.mime == "audio/mp4" }
+
+        // L'appel : qui en est, et ses messages chiffrés pour un seul membre.
+        var signals: [(String, [String: Any])] = []
+        bob.onSignal = { signals.append(($0, $1)) }
+        var changed = 0
+        bob.onCallChanged = { changed += 1 }
+        ada.setCall(inCall: true, muted: true)
+        try await wait("Ada dans l'appel") { bob.peers[ada.me]?.voice == true && bob.peers[ada.me]?.muted == true }
+        XCTAssertEqual(bob.callMembers, [ada.me])
+        XCTAssertGreaterThan(changed, 0)
+        bob.setCall(inCall: true)
+        try await wait("Bob dans l'appel") { ada.callMembers == [ada.me, bob.me] }
+        ada.signal(to: bob.me, ["sdp": ["type": "offer", "sdp": "v=0"]])
+        try await wait("signal") { !signals.isEmpty }
+        XCTAssertEqual(signals[0].0, ada.me)
+        XCTAssertEqual((signals[0].1["sdp"] as? [String: Any])?["type"] as? String, "offer")
+        ada.setCall(inCall: false)
+        try await wait("Ada sortie de l'appel") { bob.peers[ada.me]?.voice == false }
+
         // L'administratrice renomme, puis supprime le message de Bob.
         XCTAssertFalse(bob.rename("Pirate"))
         XCTAssertTrue(ada.rename("Salon renommé"))
