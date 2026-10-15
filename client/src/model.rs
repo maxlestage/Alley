@@ -51,6 +51,8 @@ pub struct Msg {
     pub mine: bool,
     /// Une photo à moi que le serveur vérifie encore.
     pub pending: bool,
+    /// Les réactions : pour chaque emoji, qui l'a mis.
+    pub reactions: crate::prefs::Reactions,
 }
 
 /// La connexion temps réel au salon, avec ses écouteurs.
