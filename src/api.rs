@@ -125,7 +125,7 @@ async fn create(req: Request) -> (u16, Json<Value>) {
     }
     let until = req
         .state::<crate::billing::Billing>()
-        .until_for(body.billing.as_deref(), body.payment.as_deref())
+        .until_for(body.billing.as_deref(), body.payment.as_deref(), body.tz)
         .await;
     match rooms.create(&body.name, body.private, body.tz, until) {
         Some(room) => {
