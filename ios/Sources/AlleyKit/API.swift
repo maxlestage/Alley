@@ -128,11 +128,12 @@ public final class API: @unchecked Sendable {
 
     /// Crée un salon (ou rejoint le salon public de ce nom). Avec un compte,
     /// une période payée en cours le fait durer jusqu'à sa fin.
-    public func create(name: String, isPrivate: Bool, account: Account?) async throws -> RoomInfo {
+    public func create(name: String, isPrivate: Bool, account: Account?, payment: String? = nil) async throws -> RoomInfo {
         var body: [String: Any] = [
             "name": name, "private": isPrivate, "tz": TimeZone.current.secondsFromGMT() / 60,
         ]
         if let account { body["billing"] = account.billing }
+        if let payment { body["payment"] = payment }
         return try decode(RoomInfo.self, try await request("POST", "/api/v1/rooms", body: body))
     }
 
@@ -171,6 +172,17 @@ public final class API: @unchecked Sendable {
               let list = v["iceServers"] as? [[String: Any]], !list.isEmpty
         else { return fallback }
         return list
+    }
+
+    /// La période payée du compte (`payment` : `apple:<transaction>` pour un
+    /// achat sur iPhone) : sa fin, si elle court encore.
+    public func periodEnd(_ account: Account, payment: String?) async -> Date? {
+        var body: [String: Any] = ["secret": account.billing, "tz": TimeZone.current.secondsFromGMT() / 60]
+        if let payment { body["payment"] = payment }
+        guard let v = try? await request("POST", "/api/v1/billing/status", body: body) as? [String: Any],
+              v["active"] as? Bool == true, let until = (v["until"] as? NSNumber)?.doubleValue
+        else { return nil }
+        return Date(timeIntervalSince1970: until / 1000)
     }
 
     /// Une requête anodine : refusée si cette adresse est bloquée.
