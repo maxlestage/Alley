@@ -312,7 +312,7 @@ static DOCS_FR: [Doc; 4] = [
             (
                 "4. Les périodes payantes",
                 &[
-                    "Une période coûte 4,99 € pour 3 jours, 9,99 € pour 7 jours, 14,99 € pour 1 mois (30 jours) ou 34,99 € pour 3 mois (90 jours), toutes taxes comprises. Elle se paie une seule fois, par carte, via Stripe. Ce n'est pas un abonnement : rien ne se renouvelle et rien n'est jamais reprélevé.",
+                    "Une période coûte 4,99 € pour 3 jours, 9,99 € pour 7 jours, 14,99 € pour 1 mois (30 jours) ou 34,99 € pour 3 mois (90 jours), toutes taxes comprises. Elle se paie une seule fois : par carte via Stripe sur le site, ou par un achat intégré de l'App Store dans l'application iPhone (au prix affiché par l'App Store, qui peut varier selon le pays). Ce n'est pas un abonnement : rien ne se renouvelle et rien n'est jamais reprélevé. Un achat sur l'App Store est traité, et le cas échéant remboursé, par Apple, selon ses conditions.",
                     "La période commence au paiement et se termine au minuit qui clôt son dernier jour (le 3ᵉ, le 7ᵉ, le 30ᵉ ou le 90ᵉ), dans le fuseau horaire de l'acheteur. Pendant la période, les salons que l'acheteur crée restent ouverts jusqu'à la fin de celle-ci au lieu de fermer à minuit. Elle n'ajoute rien d'autre : en particulier, aucun message n'est conservé.",
                     "La période est liée au compte (pseudonyme et mot de passe) avec lequel elle a été payée. Une seule période peut être en cours à la fois.",
                 ],
@@ -371,7 +371,7 @@ static DOCS_FR: [Doc; 4] = [
             (
                 "Paiements",
                 &[
-                    "Stripe traite votre e-mail et vos données de paiement, selon sa propre politique de confidentialité. Alley ne les voit jamais ; Stripe ne reçoit d'Alley qu'une empreinte de votre compte, qui ne révèle ni votre pseudonyme ni votre mot de passe.",
+                    "Stripe traite votre e-mail et vos données de paiement, selon sa propre politique de confidentialité. Alley ne les voit jamais ; Stripe ne reçoit d'Alley qu'une empreinte de votre compte, qui ne révèle ni votre pseudonyme ni votre mot de passe. Sur iPhone, Apple traite l'achat ; Alley ne reçoit que la transaction signée par l'App Store (produit, date, identifiant de transaction) et un identifiant tiré de l'empreinte de votre compte.",
                 ],
             ),
             (
@@ -494,7 +494,7 @@ static DOCS_EN: [Doc; 4] = [
             (
                 "4. Paid periods",
                 &[
-                    "A period costs €4.99 for 3 days, €9.99 for 7 days, €14.99 for 1 month (30 days) or €34.99 for 3 months (90 days), all taxes included. It is paid once, by card, through Stripe. It is not a subscription: nothing renews and nothing is ever charged again.",
+                    "A period costs €4.99 for 3 days, €9.99 for 7 days, €14.99 for 1 month (30 days) or €34.99 for 3 months (90 days), all taxes included. It is paid once: by card through Stripe on the website, or as an App Store in-app purchase in the iPhone app (at the price shown by the App Store, which may vary by country). It is not a subscription: nothing renews and nothing is ever charged again. An App Store purchase is processed, and refunded where applicable, by Apple, under its own terms.",
                     "The period starts at payment and ends at the midnight closing its last day (the 3rd, 7th, 30th or 90th), in the buyer's time zone. During the period, the rooms the buyer creates stay open until it ends instead of closing at midnight. It adds nothing else: in particular, no message is kept.",
                     "The period is tied to the account (nickname and password) it was paid with. Only one period can run at a time.",
                 ],
@@ -553,7 +553,7 @@ static DOCS_EN: [Doc; 4] = [
             (
                 "Payments",
                 &[
-                    "Stripe processes your e-mail and payment details under its own privacy policy. Alley never sees them; Stripe only receives from Alley a fingerprint of your account, which reveals neither your nickname nor your password.",
+                    "Stripe processes your e-mail and payment details under its own privacy policy. Alley never sees them; Stripe only receives from Alley a fingerprint of your account, which reveals neither your nickname nor your password. On iPhone, Apple processes the purchase; Alley only receives the transaction signed by the App Store (product, date, transaction identifier) and an identifier derived from your account's fingerprint.",
                 ],
             ),
             (
@@ -676,7 +676,7 @@ static DOCS_ES: [Doc; 4] = [
             (
                 "4. Los periodos de pago",
                 &[
-                    "Un periodo cuesta 4,99 € por 3 días, 9,99 € por 7 días, 14,99 € por 1 mes (30 días) o 34,99 € por 3 meses (90 días), impuestos incluidos. Se paga una sola vez, con tarjeta, a través de Stripe. No es una suscripción: nada se renueva y nunca se vuelve a cobrar.",
+                    "Un periodo cuesta 4,99 € por 3 días, 9,99 € por 7 días, 14,99 € por 1 mes (30 días) o 34,99 € por 3 meses (90 días), impuestos incluidos. Se paga una sola vez: con tarjeta a través de Stripe en el sitio web, o como compra integrada del App Store en la aplicación para iPhone (al precio que muestra el App Store, que puede variar según el país). No es una suscripción: nada se renueva y nunca se vuelve a cobrar. Una compra en el App Store la procesa, y en su caso la reembolsa, Apple, según sus propias condiciones.",
                     "El periodo empieza con el pago y termina a la medianoche que cierra su último día (el 3.º, el 7.º, el 30.º o el 90.º), en la zona horaria del comprador. Durante el periodo, las salas que crea el comprador siguen abiertas hasta su final en lugar de cerrar a medianoche. No añade nada más: en particular, no se guarda ningún mensaje.",
                     "El periodo está vinculado a la cuenta (seudónimo y contraseña) con la que se pagó. Solo puede haber un periodo en curso a la vez.",
                 ],
@@ -735,7 +735,7 @@ static DOCS_ES: [Doc; 4] = [
             (
                 "Pagos",
                 &[
-                    "Stripe trata tu correo y tus datos de pago según su propia política de privacidad. Alley nunca los ve; Stripe solo recibe de Alley una huella de tu cuenta, que no revela ni tu seudónimo ni tu contraseña.",
+                    "Stripe trata tu correo y tus datos de pago según su propia política de privacidad. Alley nunca los ve; Stripe solo recibe de Alley una huella de tu cuenta, que no revela ni tu seudónimo ni tu contraseña. En iPhone, Apple procesa la compra; Alley solo recibe la transacción firmada por el App Store (producto, fecha, identificador de transacción) y un identificador derivado de la huella de tu cuenta.",
                 ],
             ),
             (
