@@ -18,7 +18,7 @@ use crate::dom::*;
 use crate::i18n::{self, LANGS, Lang, fill, t};
 use crate::model::*;
 use crate::net::{api_base, needs_server};
-use crate::recent;
+use crate::{recent, sheets};
 
 // ---------------------------------------------------------------------------
 // Les écrans
@@ -46,8 +46,18 @@ pub fn render() {
 /// L'heure locale d'une échéance (`00:00`), précédée du jour quand ce
 /// n'est pas dans les prochaines 24 heures (`jeu. 00:00`).
 fn until(t: f64) -> String {
-    if t - js_sys::Date::now() <= 24.0 * 3600.0 * 1000.0 {
+    let left = t - js_sys::Date::now();
+    if left <= 24.0 * 3600.0 * 1000.0 {
         return time_label(t);
+    }
+    // Plus d'une semaine : la date (« 14 janv. 00:00 »).
+    if left > 6.0 * 24.0 * 3600.0 * 1000.0 {
+        let options = js_sys::Object::new();
+        let _ = js_sys::Reflect::set(&options, &"day".into(), &"numeric".into());
+        let _ = js_sys::Reflect::set(&options, &"month".into(), &"short".into());
+        let date = js_sys::Date::new(&JsValue::from_f64(t))
+            .to_locale_date_string(i18n::lang().code(), &options);
+        return format!("{} {}", String::from(date), time_label(t));
     }
     let day = js_sys::Date::new(&JsValue::from_f64(t)).get_day() as usize;
     let name = t_weekday(day);
@@ -74,7 +84,7 @@ fn people_label(n: u64) -> String {
 }
 
 /// Le choix de la langue : tout est redessiné, rien n'est perdu.
-fn lang_picker() -> El {
+pub(crate) fn lang_picker() -> El {
     let select = h("select.lang")
         .attr("aria-label", t().language)
         .children(LANGS.iter().map(|l| {
@@ -348,30 +358,18 @@ fn lobby() -> El {
                 .child(h("span.spacer"))
                 .child(lang_picker())
                 .child(
+                    icon_btn(t.settings, "⚙")
+                        .id("settings-btn")
+                        .on("click", |_| sheets::settings_sheet()),
+                )
+                .child(
                     h("button.me-chip")
                         .attr("type", "button")
-                        .attr(
-                            "title",
-                            if signed_in {
-                                t.logout
-                            } else {
-                                t.change_pseudonym
-                            },
-                        )
+                        .attr("title", t.settings)
                         .child(avatar("moi", &name, "tiny"))
                         .child(h("span").text(&name))
                         .child(signed_in.then(|| h("small.key-badge").text("🔑")))
-                        .on("click", |_| {
-                            app(|a| {
-                                a.name.clear();
-                                a.account = None;
-                                a.pass = None;
-                                a.pass_id = None;
-                                a.mine.clear();
-                            });
-                            crate::vault::set_account(None);
-                            render();
-                        }),
+                        .on("click", |_| sheets::settings_sheet()),
                 ),
         )
         .child(
@@ -396,6 +394,7 @@ fn lobby() -> El {
                 )
                 .child(h("h1").text(t.lobby_title))
                 .child(h("p.muted").text(t.lobby_intro))
+                .child(quick_actions(signed_in))
                 .child(
                     h("form.search")
                         .child(q)
@@ -418,6 +417,37 @@ fn lobby() -> El {
                 .child(h("div#rooms.rooms").attr("aria-live", "polite"))
                 .child(h("section#plans.plans").attr("hidden", ""))
                 .child(app_footer()),
+        )
+}
+
+/// Les gestes du hall, à portée de main : créer, rejoindre par un lien,
+/// réglages, installer, se déconnecter.
+fn quick_actions(signed_in: bool) -> El {
+    let t = t();
+    let action = |id: &str, icon: &str, label: &str| {
+        h("button.quick")
+            .id(id)
+            .attr("type", "button")
+            .child(h("span.quick-icon").attr("aria-hidden", "true").text(icon))
+            .child(h("span").text(label))
+    };
+    h("nav.quick-actions")
+        .attr("aria-label", t.actions)
+        .child(action("create-btn", "＋", t.new_room).on("click", |_| sheets::create_sheet()))
+        .child(action("join-btn", "🔗", t.join_room).on("click", |_| sheets::join_sheet()))
+        .child(action("settings-quick", "⚙", t.settings).on("click", |_| sheets::settings_sheet()))
+        .child(sheets::install_button("button.quick"))
+        .child(
+            action(
+                "logout-btn",
+                "⎋",
+                if signed_in {
+                    t.logout
+                } else {
+                    t.change_pseudonym
+                },
+            )
+            .on("click", |_| app::logout()),
         )
 }
 
@@ -593,7 +623,7 @@ pub fn render_rooms() {
 
 /// Une page de la vitrine (aide, règles, conditions…), dans la langue
 /// choisie, ouverte à côté de l'application.
-fn site_link(slug: &str, label: &str) -> El {
+pub(crate) fn site_link(slug: &str, label: &str) -> El {
     let href = if slug == "faq" {
         format!("{}{}/#faq", base(), i18n::lang().prefix())
     } else {
@@ -607,7 +637,7 @@ fn site_link(slug: &str, label: &str) -> El {
 }
 
 /// L'adresse de contact de l'éditeur (`<meta name="alley-contact">`).
-fn contact_email() -> String {
+pub(crate) fn contact_email() -> String {
     meta("alley-contact")
 }
 
@@ -633,39 +663,6 @@ fn app_footer() -> El {
                 .attr("rel", "noopener")
                 .text(t.contact_link),
         )
-}
-
-/// Signaler un abus dans un salon : un e-mail à l'éditeur, prérempli avec
-/// le salon et l'heure (les messages, chiffrés, ne peuvent pas être joints).
-/// Seulement si une adresse de contact est configurée : un signalement ne
-/// doit jamais être public.
-fn report_button(name: &str) -> Option<El> {
-    let email = contact_email();
-    if email.is_empty() {
-        return None;
-    }
-    let name = name.to_owned();
-    let link = h("a.icon-btn.report")
-        .attr("title", t().report)
-        .attr("aria-label", t().report)
-        .attr("href", format!("mailto:{email}"))
-        .text("⚑");
-    let el = link.0.clone();
-    // L'adresse se compose au clic : le salon et l'heure du signalement.
-    Some(link.on("click", move |_| {
-        let t = t();
-        let room = room().map(|r| r.borrow().id.clone()).unwrap_or_default();
-        let when = js_sys::Date::new_0().to_locale_string("default", &JsValue::UNDEFINED);
-        let subject = fill(t.report_subject, &[&name]);
-        let body = fill(t.report_body, &[&name, &room, &String::from(when)]);
-        let enc = |s: &str| String::from(js_sys::encode_uri_component(s));
-        let href = format!(
-            "mailto:{email}?subject={}&body={}",
-            enc(&subject),
-            enc(&body)
-        );
-        let _ = el.set_attribute("href", &href);
-    }))
 }
 
 /// Un prix payé une fois (`4,99 €`).
@@ -719,6 +716,12 @@ pub fn render_plans() {
                         .children(cards.iter().map(|p| {
                             let id = p["id"].as_str().unwrap_or_default().to_owned();
                             let days = p["days"].as_u64().unwrap_or_default().to_string();
+                            let months = p["months"].as_u64().unwrap_or_default();
+                            let label = match months {
+                                0 => fill(t.plan_name, &[&days]),
+                                1 => t.plan_month_one.to_owned(),
+                                n => fill(t.plan_months, &[&n.to_string()]),
+                            };
                             let button = h("button.primary").attr("type", "button");
                             // Sans compte : de quoi se connecter, plutôt qu'un
                             // bouton éteint.
@@ -741,7 +744,7 @@ pub fn render_plans() {
                             };
                             h("div.plan-card")
                                 .data("plan", p["id"].as_str().unwrap_or_default())
-                                .child(h("strong").text(fill(t.plan_name, &[&days])))
+                                .child(h("strong").text(&label))
                                 .child(
                                     h("span.price")
                                         .text(price(p["amount"].as_u64().unwrap_or_default())),
@@ -818,7 +821,11 @@ pub fn render_room() {
                     )
                     .text("🔒"),
             )
-            .child(icon_btn(t.invite, "🔗").click(|| async { invite().await }))
+            .child(
+                icon_btn(t.invite, "🔗")
+                    .class("invite-btn")
+                    .click(|| async { invite().await }),
+            )
             .child(
                 h("button.icon-btn#call-btn")
                     .attr("type", "button")
@@ -833,7 +840,11 @@ pub fn render_room() {
                     }),
             )
             .child(icon_btn(t.members, "👥").on("click", |_| toggle_members(None)))
-            .child(report_button(&name));
+            .child(
+                icon_btn(t.room_settings, "⚙")
+                    .id("room-settings")
+                    .on("click", |_| sheets::room_sheet()),
+            );
         let layout = h("div.layout.room-layout")
             .class_if("members-open", show)
             .child(
@@ -841,9 +852,30 @@ pub fn render_room() {
                     .child(head)
                     .child(h("div#call"))
                     .child(
-                        h("div.messages#messages")
-                            .attr("role", "log")
-                            .attr("aria-live", "polite"),
+                        h("div.messages-wrap")
+                            .child(
+                                h("div.messages#messages")
+                                    .attr("role", "log")
+                                    .attr("aria-live", "polite"),
+                            )
+                            .child(
+                                h("button.to-bottom#to-bottom")
+                                    .attr("type", "button")
+                                    .attr("hidden", "")
+                                    .attr("title", t.to_bottom)
+                                    .attr("aria-label", t.to_bottom)
+                                    .text("↓")
+                                    .on("click", |_| {
+                                        if let Some(m) = by_id("messages") {
+                                            m.scroll_to_with_scroll_to_options(&{
+                                                let o = web_sys::ScrollToOptions::new();
+                                                o.set_top(m.scroll_height() as f64);
+                                                o.set_behavior(web_sys::ScrollBehavior::Smooth);
+                                                o
+                                            });
+                                        }
+                                    }),
+                            ),
                     )
                     .child(h("div.typing#typing").attr("aria-live", "polite"))
                     .child(composer()),
@@ -851,6 +883,11 @@ pub fn render_room() {
             .child(h("aside.members#members").attr("aria-label", t.members))
             .child(h("div.scrim").on("click", |_| toggle_members(Some(false))));
         replace(&root, vec![layout.into()]);
+        // Remonté dans la conversation : un bouton pour revenir en bas.
+        if let Some(m) = by_id("messages") {
+            let m2 = m.clone();
+            listen(&m, "scroll", move |_| update_to_bottom(&m2));
+        }
     });
     render_people();
     render_call();
@@ -869,17 +906,13 @@ pub fn key_arrived() {
     render_messages(true);
 }
 
-async fn invite() {
+pub(crate) async fn invite() {
     let Some(room) = room() else { return };
     let (id, name) = {
         let r = room.borrow();
         (r.id.clone(), r.name.clone())
     };
-    let link = format!(
-        "{}{}#salon={id}",
-        window().location().origin().unwrap_or_default(),
-        app::app_path(i18n::lang())
-    );
+    let link = sheets::room_link(&id);
     let nav: JsValue = window().navigator().into();
     if touch() && has(&nav, "share") {
         let data = js_sys::Object::new();
@@ -1040,6 +1073,18 @@ pub fn render_messages(stick: bool) {
     if stick || at_bottom {
         box_.set_scroll_top(box_.scroll_height());
     }
+    update_to_bottom(&box_);
+}
+
+fn update_to_bottom(box_: &Element) {
+    let far = box_.scroll_height() - box_.scroll_top() - box_.client_height() > 240;
+    if let Some(b) = by_id("to-bottom") {
+        let _ = if far {
+            b.remove_attribute("hidden")
+        } else {
+            b.set_attribute("hidden", "")
+        };
+    }
 }
 
 fn message_node(m: &Msg, all: &[Msg], grouped: bool, admin: bool) -> El {
@@ -1086,7 +1131,10 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool, admin: bool) -> El {
     let (mid, text) = (m.mid.clone(), m.text.clone());
     let mid2 = mid.clone();
     let mid3 = mid.clone();
+    let mid4 = mid.clone();
+    let mid5 = mid.clone();
     let actions = h("div.actions")
+        .child(quick_reactions(&mid4))
         .child(icon_btn(t.reply, "↩").on("click", move |_| start_reply(&mid)))
         .child(
             (m.mine && m.kind == "text")
@@ -1107,7 +1155,44 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool, admin: bool) -> El {
                         delete_message(&mid3);
                     }
                 })
-        }));
+        }))
+        .child(
+            icon_btn(t.more, "⋯")
+                .class("more")
+                .on("click", move |_| sheets::message_menu(&mid5)),
+        );
+    let me = room().map(|r| r.borrow().me.clone()).unwrap_or_default();
+    let counted = crate::prefs::counted(&m.reactions);
+    let reactions = (!counted.is_empty()).then(|| {
+        h("div.reactions").children(counted.into_iter().map(|(e, people)| {
+            let mine = people.contains(&me);
+            let mid = m.mid.clone();
+            let names = room()
+                .map(|r| {
+                    let r = r.borrow();
+                    people
+                        .iter()
+                        .map(|p| {
+                            if *p == r.me {
+                                t.me_label.to_owned()
+                            } else {
+                                r.name_of(p)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            h("button.reaction")
+                .attr("type", "button")
+                .class_if("mine", mine)
+                .attr("aria-pressed", mine.to_string())
+                .attr("title", names)
+                .child(h("span").text(e))
+                .child(h("small").text(people.len().to_string()))
+                .on("click", move |_| app::react(&mid, e))
+        }))
+    });
     let meta = (!grouped).then(|| {
         h("div.meta")
             .child(
@@ -1131,18 +1216,50 @@ fn message_node(m: &Msg, all: &[Msg], grouped: bool, admin: bool) -> El {
             h("div.body")
                 .child(meta)
                 .child(content)
-                .child(m.edited.then(|| h("small.edited").text(t.edited))),
+                .child(m.edited.then(|| h("small.edited").text(t.edited)))
+                .child(reactions),
         )
         .child(actions);
     if touch() {
-        // Appui long : les actions du message.
-        let el = node.0.clone();
-        listen(&el.clone(), "contextmenu", move |e| {
+        // Appui long : le menu du message.
+        let mid = m.mid.clone();
+        listen(&node.0.clone(), "contextmenu", move |e| {
             e.prevent_default();
-            let _ = el.class_list().add_1("show-actions");
+            sheets::message_menu(&mid);
         });
     }
     node
+}
+
+/// « Réagir » : les six réactions, d'un clic.
+fn quick_reactions(mid: &str) -> El {
+    let t = t();
+    let pop = h("div.react-pop")
+        .attr("hidden", "")
+        .children(crate::prefs::REACTIONS.map(|e| {
+            let mid = mid.to_owned();
+            h("button.react-pick")
+                .attr("type", "button")
+                .attr("title", e)
+                .text(e)
+                .on("click", move |_| app::react(&mid, e))
+        }))
+        .el();
+    let pop2 = pop.clone();
+    h("span.react-wrap")
+        .child(
+            icon_btn(t.react, "☺")
+                .class("react-btn")
+                .on("click", move |_| {
+                    let hidden = pop2.has_attribute("hidden");
+                    let _ = if hidden {
+                        pop2.remove_attribute("hidden")
+                    } else {
+                        pop2.set_attribute("hidden", "")
+                    };
+                }),
+        )
+        .child(pop)
 }
 
 fn scroll_to_message(mid: &str) {
@@ -1529,7 +1646,20 @@ fn composer() -> El {
             }
             focus(&input3);
         });
-    h("div.composer").child(h("div#bar")).child(
+    let emoji_btn = icon_btn(t.emoji, "😊").class("emoji-btn").el();
+    let picker = sheets::emoji_picker(&input);
+    {
+        let picker2 = picker.clone();
+        listen(&emoji_btn, "click", move |_| {
+            let hidden = picker2.has_attribute("hidden");
+            let _ = if hidden {
+                picker2.remove_attribute("hidden")
+            } else {
+                picker2.set_attribute("hidden", "")
+            };
+        });
+    }
+    h("div.composer").child(h("div#bar")).child(picker).child(
         h("div.input-row")
             .child(
                 icon_btn(t.attach_photo, "＋")
@@ -1543,6 +1673,7 @@ fn composer() -> El {
             .child(file)
             .child(code_btn)
             .child(input)
+            .child(emoji_btn)
             .child(can_record.then(|| {
                 icon_btn(t.voice_message, "🎤")
                     .class("mic")
@@ -1705,7 +1836,7 @@ fn render_bar() {
     });
 }
 
-fn start_reply(mid: &str) {
+pub(crate) fn start_reply(mid: &str) {
     app(|a| {
         a.editing = None;
         a.reply_to = Some(mid.to_owned());
@@ -1716,7 +1847,7 @@ fn start_reply(mid: &str) {
     }
 }
 
-fn start_edit(mid: &str) {
+pub(crate) fn start_edit(mid: &str) {
     let text = room()
         .and_then(|r| {
             r.borrow()
@@ -1751,7 +1882,7 @@ fn cancel_bars() {
     render_bar();
 }
 
-fn field(label: &str, input: &Element, hint: Option<&str>) -> El {
+pub(crate) fn field(label: &str, input: &Element, hint: Option<&str>) -> El {
     h("label.field")
         .child(h("span").text(label))
         .child(input.clone())
@@ -1778,7 +1909,7 @@ fn initials(name: &str) -> String {
     out
 }
 
-fn avatar(id: &str, name: &str, size: &str) -> El {
+pub(crate) fn avatar(id: &str, name: &str, size: &str) -> El {
     h("span.avatar")
         .class(size)
         .style("--h", hue(id).to_string())
@@ -1786,7 +1917,7 @@ fn avatar(id: &str, name: &str, size: &str) -> El {
         .text(initials(name))
 }
 
-fn icon_btn(label: &str, icon: &str) -> El {
+pub(crate) fn icon_btn(label: &str, icon: &str) -> El {
     h("button.icon-btn")
         .attr("type", "button")
         .attr("title", label)
@@ -2090,6 +2221,12 @@ fn insert_text(input: &Element, text: &str, caret: usize) {
     let at = (start + caret) as u32;
     let _ = area.set_selection_range(at, at);
     let _ = input.dispatch_event(&Event::new("input").expect("événement"));
+}
+
+/// Insère `text` au curseur (un emoji choisi), et y replace le curseur.
+pub(crate) fn insert_at_caret(input: &Element, text: &str) {
+    insert_text(input, text, text.encode_utf16().count());
+    focus(input);
 }
 
 /// Le texte sélectionné dans la zone de saisie.

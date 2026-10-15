@@ -61,8 +61,9 @@ pub fn is_tag(tag: &str) -> bool {
 }
 
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
-/// La plus longue période qu'on puisse payer (7 jours), et sa marge de fuseau.
-const MAX_PERIOD: i64 = 8 * DAY_MS;
+/// La plus longue période qu'on puisse payer (3 mois, 90 jours), et sa marge
+/// de fuseau.
+const MAX_PERIOD: i64 = 92 * DAY_MS;
 
 pub fn now_ms() -> i64 {
     SystemTime::now()
@@ -564,6 +565,34 @@ impl Rooms {
         }
     }
 
+    /// L'administrateur renomme le salon : tous les présents reçoivent la
+    /// nouvelle description, signée (`renamed`). Un salon public ne peut pas
+    /// prendre le nom d'un autre salon public.
+    pub fn rename(&self, id: &str, by: &str, name: &str) -> Result<Value, &'static str> {
+        let name = clean_name(name).ok_or("bad_name")?;
+        let key = normalize(&name);
+        let signing = self.signing_key();
+        let mut rooms = self.rooms.lock().unwrap();
+        let private = rooms.get(id).ok_or("room_gone")?.private;
+        if !private
+            && rooms
+                .values()
+                .any(|r| r.id != id && !r.private && r.key == key)
+        {
+            return Err("name_taken");
+        }
+        let room = rooms.get_mut(id).ok_or("room_gone")?;
+        if room.admin.as_deref() != Some(by) {
+            return Err("not_admin");
+        }
+        room.name = name;
+        room.key = key;
+        let info = room.info(&signing);
+        let event = json!({ "type": "renamed", "room": info }).to_string();
+        room.broadcast("", &event);
+        Ok(info)
+    }
+
     /// L'administrateur exclut un membre : il est déconnecté, et ne peut plus
     /// revenir (sa marque, ou son adresse s'il n'a pas de compte) tant que le
     /// salon existe. Renvoie `false` si `by` n'est pas l'administrateur.
@@ -825,6 +854,32 @@ mod tests {
         assert_eq!(after.info(&kept.id).unwrap()["sig"], sig);
         let mut a = after.join(&kept.id, "xa".into(), None, None, None).unwrap();
         assert_eq!(next(&mut a)["type"], "welcome");
+    }
+
+    #[test]
+    fn only_the_admin_renames_and_everyone_gets_the_signed_name() {
+        let rooms = Rooms::default();
+        let id = room_id(&rooms);
+        let mut ada = rooms.join(&id, "xa".into(), None, None, None).unwrap();
+        let mut bob = rooms.join(&id, "xb".into(), None, None, None).unwrap();
+        while ada.inbox.try_recv().is_ok() {}
+        while bob.inbox.try_recv().is_ok() {}
+        assert_eq!(rooms.rename(&id, &bob.me, "Pirate"), Err("not_admin"));
+        assert_eq!(rooms.rename(&id, &ada.me, "   "), Err("bad_name"));
+        rooms.create("Autre", false, 0, None).unwrap();
+        assert_eq!(rooms.rename(&id, &ada.me, "autre"), Err("name_taken"));
+        let info = rooms.rename(&id, &ada.me, "Nouveau nom").unwrap();
+        assert_eq!(info["name"], "Nouveau nom");
+        for inbox in [&mut ada, &mut bob] {
+            let e = next(inbox);
+            assert_eq!(
+                (e["type"].as_str(), e["room"]["name"].as_str()),
+                (Some("renamed"), Some("Nouveau nom"))
+            );
+            assert_eq!(e["room"]["sig"], info["sig"]);
+        }
+        assert_eq!(rooms.list("nouveau").len(), 1);
+        assert!(rooms.list("club").is_empty());
     }
 
     #[test]

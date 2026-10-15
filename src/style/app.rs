@@ -34,7 +34,7 @@ pub fn app() -> String {
             ("color-scheme", "dark"),
         ],
     );
-    s.media("(prefers-color-scheme: light)", |s| {
+    s.light(|s| {
         s.rule(
             ":root",
             &[
@@ -570,7 +570,7 @@ pub fn app() -> String {
             ("font-weight", "600"),
         ],
     );
-    s.media("(prefers-color-scheme: light)", |s| {
+    s.light(|s| {
         s.rule(".author", &[("color", "hsl(var(--h, 260) 60% 38%)")]);
     });
     s.rule(
@@ -642,7 +642,7 @@ pub fn app() -> String {
             ("--code-head", "#25213a"),
         ],
     );
-    s.media("(prefers-color-scheme: light)", |s| {
+    s.light(|s| {
         s.rule(
             ":root",
             &[
@@ -2311,5 +2311,584 @@ pub fn app() -> String {
             &[("min-width", "64px"), ("padding", "8px")],
         );
     });
+    controls(&mut s);
     s.css()
+}
+
+/// Les gestes du hall, les fenêtres (créer, rejoindre, réglages, salon,
+/// menu ⋯), les réactions, le sélecteur d'emoji.
+fn controls(s: &mut Sheet) {
+    // Le hall : une rangée de gestes.
+    s.rule(
+        ".quick-actions",
+        &[
+            ("display", "flex"),
+            ("flex-wrap", "wrap"),
+            ("gap", "8px"),
+            ("margin", "4px 0 18px"),
+        ],
+    );
+    s.rule(
+        ".quick",
+        &[
+            ("display", "inline-flex"),
+            ("align-items", "center"),
+            ("gap", "8px"),
+            ("min-height", "44px"),
+            ("padding", "0 14px"),
+            ("border-radius", "999px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--side)"),
+            ("color", "var(--fg)"),
+            ("font-weight", "600"),
+            ("font-size", "14px"),
+        ],
+    );
+    s.rule(
+        ".quick:hover, .quick:focus-visible",
+        &[
+            ("background", "var(--hover)"),
+            ("border-color", "var(--accent)"),
+        ],
+    );
+    s.rule(
+        "#create-btn",
+        &[
+            ("background", "var(--accent)"),
+            ("border-color", "var(--accent)"),
+            ("color", "var(--accent-fg)"),
+        ],
+    );
+    s.rule(
+        ".quick-icon",
+        &[("font-size", "16px"), ("line-height", "1")],
+    );
+    s.rule(
+        "[hidden].quick, .install-btn[hidden]",
+        &[("display", "none")],
+    );
+    // Les fenêtres.
+    s.rule(
+        "dialog.sheet",
+        &[
+            ("width", "min(520px, calc(100vw - 24px))"),
+            ("max-height", "calc(var(--app-height) - 32px)"),
+            ("padding", "0"),
+            ("border", "1px solid var(--line)"),
+            ("border-radius", "18px"),
+            ("background", "var(--chat)"),
+            ("color", "var(--fg)"),
+            ("box-shadow", "0 24px 60px #0007"),
+            ("overflow", "auto"),
+        ],
+    );
+    s.rule(
+        "dialog.sheet::backdrop",
+        &[("background", "#0009"), ("backdrop-filter", "blur(2px)")],
+    );
+    s.rule(
+        "dialog.sheet[open]",
+        &[("animation", "sheet-in 0.18s ease-out")],
+    );
+    s.keyframes("sheet-in", |s| {
+        s.rule(
+            "from",
+            &[
+                ("opacity", "0"),
+                ("transform", "translateY(12px) scale(0.98)"),
+            ],
+        );
+        s.rule("to", &[("opacity", "1"), ("transform", "none")]);
+    });
+    s.rule(
+        ".sheet-head",
+        &[
+            ("position", "sticky"),
+            ("top", "0"),
+            ("z-index", "1"),
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("gap", "8px"),
+            ("padding", "14px 14px 10px 20px"),
+            ("background", "var(--chat)"),
+            ("border-bottom", "1px solid var(--line)"),
+        ],
+    );
+    s.rule(
+        ".sheet-head h2",
+        &[
+            ("flex", "1"),
+            ("margin", "0"),
+            ("font-size", "18px"),
+            ("overflow", "hidden"),
+            ("text-overflow", "ellipsis"),
+            ("white-space", "nowrap"),
+        ],
+    );
+    s.rule(
+        ".sheet-body",
+        &[
+            ("display", "grid"),
+            ("gap", "18px"),
+            ("padding", "16px 20px 22px"),
+        ],
+    );
+    s.rule(".sheet-form", &[("display", "grid"), ("gap", "14px")]);
+    s.rule(".sheet-section", &[("display", "grid"), ("gap", "10px")]);
+    s.rule(
+        ".sheet-section h3",
+        &[
+            ("margin", "0"),
+            ("font-size", "12px"),
+            ("text-transform", "uppercase"),
+            ("letter-spacing", "0.05em"),
+            ("color", "var(--muted)"),
+        ],
+    );
+    s.rule(
+        ".sheet-actions",
+        &[("display", "flex"), ("flex-wrap", "wrap"), ("gap", "8px")],
+    );
+    s.rule(
+        ".sheet button.primary, .sheet button.secondary, .sheet .button-like",
+        &[
+            ("display", "inline-flex"),
+            ("align-items", "center"),
+            ("justify-content", "center"),
+            ("gap", "8px"),
+            ("min-height", "44px"),
+            ("padding", "0 16px"),
+            ("border-radius", "10px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--elev)"),
+            ("color", "var(--fg)"),
+            ("font-weight", "600"),
+            ("font-size", "15px"),
+            ("text-decoration", "none"),
+        ],
+    );
+    s.rule(
+        ".sheet button.primary",
+        &[
+            ("background", "var(--accent)"),
+            ("border-color", "var(--accent)"),
+            ("color", "var(--accent-fg)"),
+        ],
+    );
+    s.rule(".sheet button.wide", &[("width", "100%")]);
+    s.rule(
+        ".sheet .danger, .sheet button.secondary.danger",
+        &[("color", "var(--danger)")],
+    );
+    // Le texte d'invite tient sur une ligne, même étroit.
+    s.rule(
+        "#input::placeholder",
+        &[("white-space", "nowrap"), ("text-overflow", "ellipsis")],
+    );
+    s.rule(
+        ".sheet button.secondary:hover, .sheet .button-like:hover",
+        &[("background", "var(--hover)")],
+    );
+    s.rule(".small", &[("font-size", "13px")]);
+    s.rule(".sheet p", &[("margin", "0")]);
+    // Une ligne de réglage avec son interrupteur.
+    s.rule(
+        ".switch-row",
+        &[
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("gap", "14px"),
+            ("min-height", "52px"),
+            ("padding", "8px 12px"),
+            ("border-radius", "12px"),
+            ("background", "var(--side)"),
+            ("cursor", "pointer"),
+        ],
+    );
+    s.rule(
+        ".switch-text",
+        &[("flex", "1"), ("display", "grid"), ("gap", "2px")],
+    );
+    s.rule(
+        ".switch-text small",
+        &[("color", "var(--muted)"), ("font-size", "13px")],
+    );
+    s.rule(
+        "input[role=switch]",
+        &[
+            ("appearance", "none"),
+            ("flex", "none"),
+            ("position", "relative"),
+            ("width", "44px"),
+            ("height", "26px"),
+            ("margin", "0"),
+            ("border-radius", "999px"),
+            ("background", "var(--line)"),
+            ("cursor", "pointer"),
+            ("transition", "background 0.15s"),
+        ],
+    );
+    s.rule(
+        "input[role=switch]::after",
+        &[
+            ("content", "''"),
+            ("position", "absolute"),
+            ("top", "3px"),
+            ("left", "3px"),
+            ("width", "20px"),
+            ("height", "20px"),
+            ("border-radius", "50%"),
+            ("background", "#fff"),
+            ("box-shadow", "0 1px 3px #0005"),
+            ("transition", "transform 0.15s"),
+        ],
+    );
+    s.rule(
+        "input[role=switch]:checked",
+        &[("background", "var(--accent)")],
+    );
+    s.rule(
+        "input[role=switch]:checked::after",
+        &[("transform", "translateX(18px)")],
+    );
+    s.rule(
+        "input[role=switch]:focus-visible",
+        &[
+            ("outline", "2px solid var(--accent)"),
+            ("outline-offset", "2px"),
+        ],
+    );
+    s.rule(
+        ".setting",
+        &[
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("justify-content", "space-between"),
+            ("gap", "12px"),
+            ("flex-wrap", "wrap"),
+        ],
+    );
+    s.rule(
+        ".segmented",
+        &[
+            ("display", "inline-flex"),
+            ("padding", "3px"),
+            ("gap", "2px"),
+            ("border-radius", "10px"),
+            ("background", "var(--side)"),
+            ("border", "1px solid var(--line)"),
+        ],
+    );
+    s.rule(
+        ".segmented button",
+        &[
+            ("min-height", "36px"),
+            ("padding", "0 14px"),
+            ("border-radius", "8px"),
+            ("color", "var(--muted)"),
+            ("font-weight", "600"),
+        ],
+    );
+    s.rule(
+        ".segmented button[aria-checked=true]",
+        &[
+            ("background", "var(--accent)"),
+            ("color", "var(--accent-fg)"),
+        ],
+    );
+    s.rule(
+        ".me-row",
+        &[
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("gap", "12px"),
+        ],
+    );
+    s.rule(".me-row div", &[("display", "grid"), ("gap", "2px")]);
+    s.rule(
+        ".help-links",
+        &[
+            ("display", "flex"),
+            ("flex-wrap", "wrap"),
+            ("gap", "8px 16px"),
+        ],
+    );
+    s.rule(
+        ".help-links a",
+        &[("color", "var(--accent)"), ("text-decoration", "none")],
+    );
+    s.rule(".help-links a:hover", &[("text-decoration", "underline")]);
+    s.rule(".copy-row", &[("display", "flex"), ("gap", "8px")]);
+    s.rule(
+        ".copy-row input",
+        &[
+            ("flex", "1"),
+            ("min-width", "0"),
+            ("min-height", "44px"),
+            ("padding", "10px 12px"),
+            ("font-size", "15px"),
+            ("border-radius", "10px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--rail)"),
+            ("color", "var(--fg)"),
+        ],
+    );
+    s.rule(
+        ".facts",
+        &[
+            ("display", "grid"),
+            ("grid-template-columns", "auto 1fr"),
+            ("gap", "6px 14px"),
+            ("margin", "0"),
+            ("font-size", "14px"),
+        ],
+    );
+    s.rule(".facts dt", &[("color", "var(--muted)")]);
+    s.rule(
+        ".facts dd",
+        &[("margin", "0"), ("overflow-wrap", "anywhere")],
+    );
+    s.rule(
+        ".mono",
+        &[("font-family", "var(--mono)"), ("font-size", "13px")],
+    );
+    // Le menu ⋯ d'un message.
+    s.rule(".menu", &[("display", "grid"), ("gap", "4px")]);
+    s.rule(
+        ".menu-item",
+        &[
+            ("display", "flex"),
+            ("align-items", "center"),
+            ("gap", "12px"),
+            ("min-height", "48px"),
+            ("padding", "0 12px"),
+            ("border-radius", "10px"),
+            ("color", "var(--fg)"),
+            ("text-decoration", "none"),
+            ("font-size", "15px"),
+            ("text-align", "left"),
+        ],
+    );
+    s.rule(
+        ".menu-item:hover, .menu-item:focus-visible",
+        &[("background", "var(--hover)")],
+    );
+    s.rule(".menu-item.danger", &[("color", "var(--danger)")]);
+    s.rule(
+        ".menu-icon",
+        &[
+            ("width", "24px"),
+            ("text-align", "center"),
+            ("font-size", "18px"),
+        ],
+    );
+    s.rule(
+        ".react-row",
+        &[
+            ("display", "flex"),
+            ("justify-content", "space-between"),
+            ("gap", "4px"),
+            ("padding", "4px 0 10px"),
+            ("margin-bottom", "4px"),
+            ("border-bottom", "1px solid var(--line)"),
+        ],
+    );
+    s.rule(
+        ".react-pick",
+        &[
+            ("width", "44px"),
+            ("height", "44px"),
+            ("border-radius", "50%"),
+            ("font-size", "22px"),
+            ("line-height", "1"),
+        ],
+    );
+    s.rule(".react-pick:hover", &[("background", "var(--hover)")]);
+    s.rule(
+        ".react-pick[aria-pressed=true]",
+        &[(
+            "background",
+            "color-mix(in srgb, var(--accent) 30%, transparent)",
+        )],
+    );
+    // Réagir d'un clic (survol d'un message).
+    s.rule(
+        ".react-wrap",
+        &[("position", "relative"), ("display", "inline-flex")],
+    );
+    s.rule(
+        ".react-pop",
+        &[
+            ("position", "absolute"),
+            ("right", "0"),
+            ("bottom", "calc(100% + 6px)"),
+            ("display", "flex"),
+            ("gap", "2px"),
+            ("padding", "4px"),
+            ("border-radius", "999px"),
+            ("background", "var(--elev)"),
+            ("border", "1px solid var(--line)"),
+            ("box-shadow", "0 6px 18px #0005"),
+        ],
+    );
+    s.rule(".react-pop[hidden]", &[("display", "none")]);
+    s.rule(
+        ".actions .react-pop button",
+        &[("width", "36px"), ("height", "36px"), ("font-size", "20px")],
+    );
+    // Les réactions sous un message.
+    s.rule(
+        ".reactions",
+        &[
+            ("display", "flex"),
+            ("flex-wrap", "wrap"),
+            ("gap", "4px"),
+            ("margin-top", "4px"),
+        ],
+    );
+    s.rule(
+        ".reaction",
+        &[
+            ("display", "inline-flex"),
+            ("align-items", "center"),
+            ("gap", "4px"),
+            ("min-height", "28px"),
+            ("padding", "0 8px"),
+            ("border-radius", "999px"),
+            ("border", "1px solid var(--line)"),
+            ("background", "var(--side)"),
+            ("color", "var(--fg)"),
+            ("font-size", "14px"),
+        ],
+    );
+    s.rule(
+        ".reaction small",
+        &[
+            ("font-size", "12px"),
+            ("font-weight", "700"),
+            ("color", "var(--muted)"),
+        ],
+    );
+    s.rule(
+        ".reaction.mine",
+        &[
+            ("border-color", "var(--accent)"),
+            (
+                "background",
+                "color-mix(in srgb, var(--accent) 22%, transparent)",
+            ),
+        ],
+    );
+    s.rule(".reaction.mine small", &[("color", "var(--fg)")]);
+    // Revenir en bas de la conversation.
+    s.rule(
+        ".messages-wrap",
+        &[
+            ("position", "relative"),
+            ("flex", "1"),
+            ("min-height", "0"),
+            ("display", "flex"),
+            ("flex-direction", "column"),
+        ],
+    );
+    s.rule(
+        ".to-bottom",
+        &[
+            ("position", "absolute"),
+            ("right", "16px"),
+            ("bottom", "10px"),
+            ("width", "42px"),
+            ("height", "42px"),
+            ("border-radius", "50%"),
+            ("background", "var(--accent)"),
+            ("color", "var(--accent-fg)"),
+            ("font-size", "20px"),
+            ("box-shadow", "0 6px 18px #0006"),
+            ("z-index", "3"),
+        ],
+    );
+    s.rule(".to-bottom[hidden]", &[("display", "none")]);
+    // Le sélecteur d'emoji.
+    s.rule(".composer", &[("position", "relative")]);
+    s.rule(
+        ".emoji-pop",
+        &[
+            ("position", "absolute"),
+            ("right", "12px"),
+            ("bottom", "calc(100% + 4px)"),
+            ("display", "grid"),
+            ("grid-template-columns", "repeat(8, 40px)"),
+            ("gap", "2px"),
+            ("max-width", "calc(100vw - 24px)"),
+            ("padding", "8px"),
+            ("border-radius", "14px"),
+            ("background", "var(--elev)"),
+            ("border", "1px solid var(--line)"),
+            ("box-shadow", "0 10px 30px #0006"),
+            ("z-index", "6"),
+        ],
+    );
+    s.rule(".emoji-pop[hidden]", &[("display", "none")]);
+    s.rule(
+        ".emoji-pop .emoji",
+        &[
+            ("width", "40px"),
+            ("height", "40px"),
+            ("border-radius", "8px"),
+            ("font-size", "22px"),
+            ("line-height", "1"),
+        ],
+    );
+    s.rule(".emoji-pop .emoji:hover", &[("background", "var(--hover)")]);
+    // Au doigt (pas de survol) : le ⋯ de chaque message reste visible.
+    s.media("(hover: none)", |s| {
+        s.rule(
+            ".actions",
+            &[
+                ("display", "flex"),
+                ("top", "2px"),
+                ("bottom", "auto"),
+                ("right", "6px"),
+                ("background", "none"),
+                ("border", "none"),
+                ("box-shadow", "none"),
+            ],
+        );
+        s.rule(".actions > :not(.more)", &[("display", "none")]);
+        s.rule(".message", &[("padding-right", "44px")]);
+    });
+    s.media("(max-width: 480px)", |s| {
+        // Un en-tête de salon étroit : le lien et l'empreinte sont dans les
+        // réglages du salon.
+        s.rule(
+            ".chat-head .lock, .chat-head .invite-btn",
+            &[("display", "none")],
+        );
+        s.rule(
+            ".chat-head .title",
+            &[
+                ("overflow", "hidden"),
+                ("text-overflow", "ellipsis"),
+                ("min-width", "0"),
+            ],
+        );
+    });
+    s.media("(max-width: 420px)", |s| {
+        s.rule(
+            ".emoji-pop",
+            &[
+                ("grid-template-columns", "repeat(7, 40px)"),
+                ("left", "8px"),
+                ("right", "8px"),
+            ],
+        );
+        s.rule(
+            ".quick",
+            &[
+                ("flex", "1 1 calc(50% - 8px)"),
+                ("justify-content", "center"),
+            ],
+        );
+        s.rule(".react-pick", &[("width", "40px"), ("height", "40px")]);
+    });
 }

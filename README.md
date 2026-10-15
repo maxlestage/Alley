@@ -93,8 +93,20 @@ voir [Déploiement](#déploiement).
 - 🌙 **Tout disparaît à minuit** : à minuit dans le pays de son créateur, le
   salon est fermé pour tout le monde ; à minuit chez soi, l'écran se vide.
 - 🎙️ Messages (gras, italique, code, liens, réponses, modification,
-  suppression), photos, messages vocaux, **appels audio et vidéo**, partage
-  d'écran.
+  suppression), **réactions** (👍 ❤️ 😂 😮 😢 🙏, chiffrées et signées comme
+  le reste), **sélecteur d'emoji**, photos, messages vocaux, **appels audio
+  et vidéo**, partage d'écran.
+- 🧭 **Tout à portée de main** ([`client/src/sheets.rs`](client/src/sheets.rs)) :
+  dans le hall, *Créer un salon*, *Rejoindre par lien* (le lien copié est
+  proposé), *Réglages* (pseudonyme, déconnexion, thème auto/clair/sombre,
+  langue, notifications, son, installer l'app, tout oublier, aide) ; dans un
+  salon, le menu **⋯** de chaque message (réagir, répondre, copier,
+  modifier, supprimer, signaler — visible au doigt sur téléphone), les
+  *Réglages du salon* (lien d'invitation, sourdine, **renommer** pour
+  l'administrateur — nouveau nom signé par le serveur —, empreinte de la
+  clé, signaler, quitter) et un bouton pour revenir aux derniers messages.
+  Les réglages de l'appareil ([`client/src/prefs.rs`](client/src/prefs.rs))
+  sont gardés signés, comme la liste des salons.
 - 🧑‍💻 **Le code, mis en forme et coloré** ([`client/src/highlight.rs`](client/src/highlight.rs),
   en Rust) : 28 langages (Rust, JavaScript, TypeScript, Python, Go, Java,
   Kotlin, Swift, C, C++, C#, PHP, Ruby, SQL, Shell, HTML, CSS, JSON, YAML,
@@ -181,9 +193,11 @@ Stripe : **pas d'abonnement**, rien ne se renouvelle, rien à résilier.
 |---|---|
 | 3 jours | 4,99 € |
 | 7 jours | 9,99 € |
+| 1 mois (30 jours) | 14,99 € |
+| 3 mois (90 jours) | 34,99 € |
 
 Pendant sa période, les salons que crée l'acheteur restent ouverts jusqu'à sa
-fin — le minuit, chez lui, qui clôt le 3ᵉ ou le 7ᵉ jour — au lieu de
+fin — le minuit, chez lui, qui clôt son dernier jour — au lieu de
 disparaître à minuit. Aucun message n'est gardé pour autant ; à minuit chez
 soi, l'écran d'un salon de plusieurs jours se vide, mais on y reste. Le
 paiement passe par Stripe Checkout en `mode=payment` : un seul prélèvement.
@@ -382,6 +396,7 @@ disparu au départ du dernier, et écran vidé à minuit (horloge simulée).
 | `client/src/account.rs` | la connexion : graine PBKDF2 (WebCrypto), marque, gestionnaire de mots de passe |
 | `client/src/i18n.rs` | les textes de l'application, en trois langues |
 | `client/src/ui.rs`, `dom.rs` | l'affichage, construit en Rust (aucun HTML injecté) |
+| `client/src/sheets.rs`, `prefs.rs` | les fenêtres (créer, rejoindre, réglages, salon, menu ⋯, emoji) et les réglages de l'appareil |
 | `client/src/call.rs` | les appels WebRTC |
 | `client/src/site.rs` | la vitrine (installation selon l'appareil) |
 | `web/icons/`, `web/favicon.svg` | les icônes |
