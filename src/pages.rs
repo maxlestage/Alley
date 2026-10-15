@@ -120,17 +120,21 @@ fn pricing(site: &Site, lang: Lang) -> Element {
             .child(p().text(l.pricing_free_text)),
     );
     for plan in crate::billing::PLANS {
-        let days = plan.days.to_string();
+        let length = match plan.months {
+            0 => l.pricing_days.replace("{}", &plan.days.to_string()),
+            1 => l.pricing_month_one.to_owned(),
+            n => l.pricing_months.replace("{}", &n.to_string()),
+        };
         grid = grid.child(
             article()
                 .class("card price-card")
-                .child(h3().text(l.pricing_days.replace("{}", &days)))
+                .child(h3().text(length.clone()))
                 .child(
                     p().class("amount")
                         .text(price(plan.cents))
                         .child(span().text(format!(" · {}", l.pricing_once))),
                 )
-                .child(p().text(l.pricing_paid_text.replace("{}", &days))),
+                .child(p().text(l.pricing_paid_text.replace("{}", &length))),
         );
     }
     section()

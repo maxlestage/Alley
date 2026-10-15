@@ -39,6 +39,42 @@ impl Sheet {
         self.at("media", query, rules)
     }
 
+    /// Des règles pour le thème clair : quand le système est clair (sauf si
+    /// la personne a choisi le sombre dans les réglages), ou quand elle a
+    /// choisi le clair (`<html data-theme="light|dark">`).
+    pub fn light(&mut self, rules: impl FnOnce(&mut Sheet)) -> &mut Self {
+        let mut block = Sheet::default();
+        rules(&mut block);
+        let scoped = |root: &str| {
+            let mut out = String::new();
+            for rule in block.css.split_inclusive('}') {
+                let Some((selector, body)) = rule.split_once('{') else {
+                    continue;
+                };
+                let selector = selector
+                    .split(',')
+                    .map(|part| {
+                        let part = part.trim();
+                        match part.strip_prefix(":root") {
+                            Some(rest) => format!("{root}{rest}"),
+                            None => format!("{root} {part}"),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let _ = write!(out, "{selector}{{{body}");
+            }
+            out
+        };
+        let system = scoped(":root:not([data-theme=dark])");
+        let chosen = scoped(":root[data-theme=light]");
+        let _ = write!(
+            self.css,
+            "@media (prefers-color-scheme: light){{{system}}}{chosen}"
+        );
+        self
+    }
+
     /// Une animation (`@keyframes`) : ses étapes sont des règles.
     pub fn keyframes(&mut self, name: &str, steps: impl FnOnce(&mut Sheet)) -> &mut Self {
         self.at("keyframes", name, steps)
@@ -83,5 +119,20 @@ mod tests {
             assert_eq!(css.matches('{').count(), css.matches('}').count());
             assert!(css.starts_with(":root{"));
         }
+    }
+
+    #[test]
+    fn light_rules_follow_the_system_or_the_choice() {
+        let mut s = Sheet::default();
+        s.light(|s| {
+            s.rule(":root", &[("--bg", "#fff")]);
+            s.rule(".a, .b", &[("color", "red")]);
+        });
+        assert_eq!(
+            s.css(),
+            "@media (prefers-color-scheme: light){:root:not([data-theme=dark]){--bg:#fff}\
+             :root:not([data-theme=dark]) .a,:root:not([data-theme=dark]) .b{color:red}}\
+             :root[data-theme=light]{--bg:#fff}:root[data-theme=light] .a,:root[data-theme=light] .b{color:red}"
+        );
     }
 }

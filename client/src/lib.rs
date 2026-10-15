@@ -12,6 +12,7 @@
 pub mod crypto;
 pub mod highlight;
 pub mod i18n;
+pub mod prefs;
 pub mod recent;
 
 #[cfg(target_arch = "wasm32")]
@@ -26,6 +27,8 @@ mod dom;
 mod model;
 #[cfg(target_arch = "wasm32")]
 mod net;
+#[cfg(target_arch = "wasm32")]
+mod sheets;
 #[cfg(target_arch = "wasm32")]
 mod site;
 #[cfg(target_arch = "wasm32")]

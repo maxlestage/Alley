@@ -16,8 +16,8 @@ use crate::dom::*;
 use crate::i18n::{self, Lang, t};
 use crate::model::*;
 use crate::net::{ApiError, api_base, needs_server, request, ws_base};
-use crate::recent;
 use crate::ui;
+use crate::{recent, sheets};
 
 // ---------------------------------------------------------------------------
 // Les salons ouverts
@@ -700,6 +700,46 @@ fn on_event(room: &RoomRef, event: Value) {
             ui::render_people();
             ui::render_messages(false);
         }
+        // Le salon a été renommé par son administrateur (nom signé).
+        "renamed" => {
+            let info = &event["room"];
+            let Some(name) = info["name"].as_str() else {
+                return;
+            };
+            let was_admin = {
+                let mut r = room.borrow_mut();
+                if info["id"].as_str() != Some(r.id.as_str()) {
+                    return;
+                }
+                r.name = name.to_owned();
+                r.i_am_admin()
+            };
+            recent::remember(info, &api_base(), false);
+            if let Some(title) = query(".chat-head .title") {
+                title.set_text_content(Some(name));
+            }
+            ui::render_messages(false);
+            toast(
+                i18n::fill(
+                    if was_admin {
+                        t().renamed_by_me
+                    } else {
+                        t().renamed_to
+                    },
+                    &[name],
+                ),
+                false,
+            );
+        }
+        "rename_refused" => toast(
+            match event["reason"].as_str() {
+                Some("name_taken") => t().err_name_taken,
+                Some("forbidden_name") => t().rename_forbidden,
+                Some("bad_name") => t().err_bad_name,
+                _ => t().err_generic,
+            },
+            true,
+        ),
         "closed" => match event["reason"].as_str() {
             Some("banned") => show_banned(),
             Some("expelled") => leave_room(Some(t().expelled)),
@@ -819,6 +859,7 @@ fn on_relay(room: &RoomRef, event: &Value) {
                     edited: false,
                     mine: false,
                     pending: false,
+                    reactions: Default::default(),
                 }
             };
             notify(room, &msg);
@@ -861,6 +902,20 @@ fn on_relay(room: &RoomRef, event: &Value) {
                 .retain(|m| !(m.mid == mid && (m.from == from || by_admin)));
             drop(r);
             ui::render_messages(false);
+        }
+        // Une réaction mise ou retirée (une des six permises).
+        "react" => {
+            let (mid, e) = (str_of("mid"), str_of("e"));
+            let on = p["on"].as_bool().unwrap_or_default();
+            let changed = room
+                .borrow_mut()
+                .msgs
+                .iter_mut()
+                .find(|m| m.mid == mid)
+                .is_some_and(|m| crate::prefs::react(&mut m.reactions, &e, from, on));
+            if changed {
+                ui::render_messages(false);
+            }
         }
         "typing" => {
             if let Some(peer) = room.borrow_mut().peers.get_mut(from) {
@@ -939,6 +994,7 @@ pub fn send_image(jpeg_b64: String) {
             edited: false,
             mine: true,
             pending: true,
+            reactions: Default::default(),
         });
     }
     ui::render_messages(true);
@@ -988,6 +1044,7 @@ pub fn send_message(kind: &str, x: String, mime: &str) {
             edited: false,
             mine: true,
             pending: false,
+            reactions: Default::default(),
         });
     }
     ui::render_messages(true);
@@ -1013,6 +1070,57 @@ pub fn edit_message(mid: &str, text: String) {
         m.edited = true;
     }
     ui::render_messages(false);
+}
+
+/// Met (ou retire, si je l'avais mise) une réaction à un message.
+pub fn react(mid: &str, emoji: &str) {
+    let Some(room) = room() else { return };
+    let on = {
+        let mut r = room.borrow_mut();
+        let me = r.me.clone();
+        let Some(m) = r.msgs.iter_mut().find(|m| m.mid == mid) else {
+            return;
+        };
+        let on = !m.reactions.get(emoji).is_some_and(|p| p.contains(&me));
+        if !crate::prefs::react(&mut m.reactions, emoji, &me, on) {
+            return;
+        }
+        on
+    };
+    send(
+        &room,
+        None,
+        payload("react", json!({ "mid": mid, "e": emoji, "on": on })),
+    );
+    ui::render_messages(false);
+}
+
+/// L'administrateur renomme le salon (le serveur vérifie et prévient tout
+/// le monde). Faux si le nom est refusé d'avance.
+pub fn rename_room(name: &str) -> bool {
+    let Some(room) = room() else { return false };
+    if let Some(category) = check_text(name) {
+        toast(refusal(category), true);
+        return false;
+    }
+    if !room.borrow().i_am_admin() {
+        return false;
+    }
+    send_raw(&room, &json!({ "type": "rename", "name": name }));
+    true
+}
+
+/// Se déconnecter (ou changer de pseudonyme) : retour à l'accueil.
+pub fn logout() {
+    app(|a| {
+        a.name.clear();
+        a.account = None;
+        a.pass = None;
+        a.pass_id = None;
+        a.mine.clear();
+    });
+    crate::vault::set_account(None);
+    ui::render();
 }
 
 pub fn delete_message(mid: &str) {
@@ -1163,7 +1271,18 @@ fn notify(room: &RoomRef, msg: &Msg) {
     }
     app(|a| a.unread += 1);
     update_badge();
-    if web_sys::Notification::permission() == web_sys::NotificationPermission::Granted {
+    // Un salon en sourdine : ni son ni notification.
+    let prefs = sheets::prefs();
+    if prefs.is_muted(&room.borrow().id) {
+        return;
+    }
+    if prefs.sound {
+        sheets::ding();
+    }
+    if prefs.notify
+        && has(&window(), "Notification")
+        && web_sys::Notification::permission() == web_sys::NotificationPermission::Granted
+    {
         let options = web_sys::NotificationOptions::new();
         options.set_body(&match msg.kind.as_str() {
             "image" => t().photo_label.to_owned(),
@@ -1226,6 +1345,8 @@ pub async fn start() {
     }
     // Ce que garde l'appareil, vérifié (signatures) avant tout affichage.
     recent::load().await;
+    sheets::load_prefs().await;
+    sheets::watch_install();
     warn_if_tampered();
     // Un lien de salon : `#salon=<id>`, effacé aussitôt de la barre d'adresse.
     let hash = window().location().hash().unwrap_or_default();
