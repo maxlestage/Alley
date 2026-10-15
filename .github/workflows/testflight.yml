@@ -48,6 +48,9 @@ jobs:
         id: asc
         if: steps.ready.outputs.ok == 'true'
         run: .venv/bin/python ci/asc.py prepare
+      - name: App Store Connect — les achats intégrés (périodes)
+        if: steps.ready.outputs.ok == 'true'
+        run: .venv/bin/python ci/asc.py products
       - name: Clé d'API pour Xcode
         if: steps.ready.outputs.ok == 'true'
         run: |

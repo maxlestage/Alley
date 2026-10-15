@@ -75,6 +75,7 @@ struct HallView: View {
                 }
                 ForEach(model.rooms) { RoomRow(info: $0, created: false) }
             }
+            PlansSection()
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Alley")

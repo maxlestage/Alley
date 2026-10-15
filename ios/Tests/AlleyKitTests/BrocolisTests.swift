@@ -39,6 +39,13 @@ final class BrocolisTests: XCTestCase {
         XCTAssertEqual(Account.salt("  Ada "), Data("alley:v1:ada".utf8))
     }
 
+    func testTheAppleTokenMatchesTheServer() {
+        // Le même vecteur que `apple::tests` côté serveur.
+        let a = Account(pseudonym: "Ada", tag: "", billing: String(repeating: "5", count: 64))
+        XCTAssertEqual(Account.billingID(a.billing), "d05593d48ed176ac17657955fb34d060100d61a24286e56674dae32b2486bc87")
+        XCTAssertEqual(a.appleToken.uuidString.lowercased(), "c223ad81-82f3-482f-8871-c3fe9bde14e2")
+    }
+
     func testUnwrapsTheRoomKeyHandedByTheBrowser() {
         let b = Identity(raw: Data(repeating: 2, count: 32))!
         XCTAssertEqual(Brocolis.b64(b.publicRaw), v["b_public"])

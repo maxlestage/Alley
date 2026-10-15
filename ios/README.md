@@ -24,9 +24,16 @@ L'application iOS d'Alley, en Swift et SwiftUI (iOS 17 et plus). Elle parle le m
 - **Ce que garde l'iPhone** : la liste des salons et les réglages, jamais un message. Ces données sont signées (HMAC-SHA256) par une clé de l'appareil, gardée dans le trousseau, et par celle du compte. Chaque salon garde aussi la signature du serveur. Ce qui a été modifié hors d'Alley est écarté.
 - **Le filtre de texte**, le même que celui du serveur et du navigateur : un message interdit n'est pas envoyé, et un message reçu interdit est masqué.
 
-Pas encore dans l'application : les appels audio et vidéo (WebRTC), l'enregistrement de messages vocaux et le paiement des périodes.
+- **Appels audio et vidéo** (WebRTC, de pair à pair, chiffrés DTLS-SRTP), avec le même protocole que le navigateur : un iPhone appelle un ordinateur.
+  - Ce qui transite par le serveur (l'offre, la réponse, les candidats ICE) est chiffré et signé pour un seul membre.
+  - Micro, caméra avant ou arrière, haut-parleur, vidéos des membres, bandeau pour rejoindre un appel en cours.
+- **Messages vocaux** : enregistrés en AAC (2 min au plus), lisibles partout. Ceux enregistrés par Chrome ou Firefox (WebM/Ogg Opus) sont lus par WebKit.
+- **Périodes payantes** en achats intégrés (StoreKit 2) : 3 jours, 7 jours, 1 mois, 3 mois, payés une fois, aux mêmes prix que sur le site (4,99 €, 9,99 €, 14,99 €, 34,99 €).
+  - L'achat est lié au compte Alley par son `appAccountToken` (même calcul que le serveur).
+  - Le serveur vérifie lui-même la transaction signée par l'App Store, jusqu'à l'*Apple Root CA - G3* (`src/apple.rs`).
+  - Une période achetée sur le site vaut aussi sur l'iPhone, et inversement.
 
-Une période payée sur le site s'applique bien aux salons créés depuis l'iPhone avec le même compte. Mais l'App Store impose son propre système d'achat pour vendre des contenus numériques dans une application : le paiement Stripe n'y est donc pas proposé.
+Partager son écran depuis l'iPhone n'est pas proposé : il faudrait une extension ReplayKit. L'iPhone voit en revanche l'écran partagé par un ordinateur.
 
 ## Organisation
 
@@ -62,6 +69,12 @@ Un Mac de GitHub compile l'application, la signe et l'envoie sur TestFlight (wor
    - Si App Store Connect pose la question du chiffrement sur la version : Alley chiffre les messages de bout en bout avec des algorithmes standard (AES-GCM, X25519, Ed25519).
 
 Ensuite, chaque modification de `ios/` fusionnée dans `master` envoie automatiquement une nouvelle version sur TestFlight.
+
+**Achats intégrés.** Le workflow crée lui-même les quatre périodes dans App Store Connect : prix, textes en trois langues, disponibilité et capture pour la revue d'Apple. Il reste deux choses à faire vous-même, depuis l'iPhone :
+- signer l'accord *Apps payantes*, dans *Accords, taxes et banques* ;
+- renseigner votre compte bancaire et vos informations fiscales.
+
+Sur TestFlight, les achats sont gratuits : c'est le bac à sable d'Apple. Le serveur les accepte, pour pouvoir tester. Une fois l'app publiée, mettez `ALLEY_APPLE_SANDBOX=0` sur Heroku.
 
 ## Ouvrir dans Xcode
 
