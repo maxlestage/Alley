@@ -1,0 +1,15 @@
+{
+  "a_public": "pOCSkrZRwni5dyxWn1+puxPZBrRqtoyd+dwrRAn4ogk=",
+  "b_public": "zo060cy2M+x7cMF4FKXHbs0CloUFDTRHRboFhw5YfVk=",
+  "billing": "54364829b776a728d37d0ed011e4f657bbac3e643ce9436cb32e0f8679e5aa5c",
+  "commitment": "4bb06f8e4e3a7715d201d573d0aa423762e55dabd61a2c02278fa56cc6d294e0",
+  "envelope": "[[BROCOLIS:v1:stKTyhttVPAeZjVZmYmJ/8ZNIb44cXpAwLCBH/2YxDWO7indtKn1pQUNyPtaLJZcqiD0a0qfWvTpwMh6LmNne3sgdyFs2YsBBGp65NNm7Y02UIHGPOOGs4+uDw1svCxtfvxl3lRF7xidV/X3amKB22UPe3sMWwn+OutxRTgMn2tistreguIX8r+0NmxmqFy4+LrmWhPM34OA1VoNqWYU/tmsWcmBhi3hwBE4QgP9If/00By0FZg=]]",
+  "fingerprint": "4BB0-6F8E-4E3A-7715",
+  "key": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+  "signer_public": "7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9E=",
+  "statement": "YWxsZXktcm9vbS12MQBhYjEyY2QAQ2Fmw6kAMQAxNzkxOTM2MDAwMDAw",
+  "tag": "0dee829462e733db0bc35ec28fc4b2f9204d7d3cd5236bdae729c1f596ffd843",
+  "token": "[[BROCOLIS:v1:lIe2aPiAo3MiJr0wqIgDufBIovC9xPkqMMESOp1dACalkG4D5p+nDUpwy7lZCtYG]]",
+  "vault": "9BVZhXVq98DiM/p0DYrbx6qIPY9sow7hmTpfQHQRr9A=",
+  "wrapped_for_b": "d/DgCHj47Zn92WfCuWwKUpo2F02z+NqVgj3rUSTxV5rYcrLY1Kpc+eeNpt571261qUE2qIDHIoncK+41"
+}
