@@ -28,6 +28,14 @@ public struct Account: Equatable, Sendable {
         pbkdf2(password: Data(password.utf8), salt: salt(pseudonym), iterations: iterations)
     }
 
+    /// Un compte dont on ne connaît que le secret de paiement (tests).
+    public init(pseudonym: String, tag: String, billing: String) {
+        self.pseudonym = pseudonym
+        self.tag = tag
+        self.billing = billing
+        vaultKey = Data(count: 32)
+    }
+
     public init(pseudonym: String, seed: Data) {
         self.pseudonym = pseudonym
         let salt = Data("alley-account".utf8)
@@ -38,6 +46,22 @@ public struct Account: Equatable, Sendable {
 
     public init(pseudonym: String, password: String) {
         self.init(pseudonym: pseudonym, seed: Account.seed(pseudonym: pseudonym, password: password))
+    }
+
+    /// L'identifiant de paiement du compte : l'empreinte de son secret (le
+    /// serveur ne connaît que lui).
+    public static func billingID(_ secret: String) -> String {
+        Brocolis.hex(Brocolis.sha256(Data("alley-billing-v1:\(secret)".utf8)))
+    }
+
+    /// L'`appAccountToken` des achats sur iPhone : un UUID tiré de
+    /// l'identifiant de paiement (le serveur fait le même calcul et n'ouvre
+    /// une période qu'au compte qui l'a achetée).
+    public var appleToken: UUID {
+        var b = [UInt8](Brocolis.sha256(Data("alley-apple-v1:\(Account.billingID(billing))".utf8)).prefix(16))
+        b[6] = (b[6] & 0x0f) | 0x40
+        b[8] = (b[8] & 0x3f) | 0x80
+        return UUID(uuid: (b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15]))
     }
 
     static func pbkdf2(password: Data, salt: Data, iterations: UInt32) -> Data {
