@@ -306,7 +306,7 @@ final class AppModel {
         Task { await loadHall() }
     }
 
-    func incoming(_ msg: Message) {
+    func incoming(_ msg: AlleyKit.Message) {
         guard let room, !prefs.isMuted(room.info.id) else { return }
         Notifier.message(
             from: msg.name, room: room.info.name,
@@ -365,7 +365,7 @@ final class AppModel {
     }
 
     /// Un e-mail de signalement prérempli (le salon, l'heure, le message).
-    func reportURL(room: RoomInfo, message: Message? = nil) -> URL? {
+    func reportURL(room: RoomInfo, message: AlleyKit.Message? = nil) -> URL? {
         guard let email = contactEmail else { return nil }
         let when = Date().formatted(date: .abbreviated, time: .shortened)
         var body = fill(t.reportBody, room.name, room.id, when)

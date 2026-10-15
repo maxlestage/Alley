@@ -413,8 +413,14 @@ pub mod tests {
     fn the_account_token_matches_the_iphone() {
         // Le même vecteur que `AccountTests` côté Swift.
         let billing = crate::billing::billing_id(&"5".repeat(64)).unwrap();
-        assert_eq!(billing, "d05593d48ed176ac17657955fb34d060100d61a24286e56674dae32b2486bc87");
-        assert_eq!(account_token(&billing), "c223ad81-82f3-482f-8871-c3fe9bde14e2");
+        assert_eq!(
+            billing,
+            "d05593d48ed176ac17657955fb34d060100d61a24286e56674dae32b2486bc87"
+        );
+        assert_eq!(
+            account_token(&billing),
+            "c223ad81-82f3-482f-8871-c3fe9bde14e2"
+        );
     }
 
     #[test]
