@@ -532,6 +532,10 @@ pub struct Checkout {
     /// La période que le navigateur connaît déjà.
     #[serde(default)]
     pub payment: Option<String>,
+    /// L'acheteur accepte les conditions de vente et demande que sa période
+    /// commence tout de suite, renonçant ainsi à son droit de rétractation.
+    #[serde(default)]
+    pub consent: bool,
 }
 
 #[data]
@@ -575,6 +579,11 @@ async fn checkout(req: Request) -> (u16, Json<Value>) {
     let Some(back) = return_url(&req, &body.return_to) else {
         return fail(400, "bad_return_url");
     };
+    // Sans accord exprès (conditions de vente, exécution immédiate et
+    // renonciation à la rétractation), pas de paiement.
+    if !body.consent {
+        return fail(400, "consent_required");
+    }
     match billing.lookup(&body.secret, body.payment.as_deref()).await {
         Ok(Some(p)) if p.active(now_ms()) => return fail(409, "already_active"),
         Ok(_) => {}
@@ -608,6 +617,11 @@ async fn checkout(req: Request) -> (u16, Json<Value>) {
             plan.id.to_owned(),
         ),
         ("payment_intent_data[metadata][alley_tz]", tz),
+        // La preuve de l'accord : quand il a été donné.
+        (
+            "payment_intent_data[metadata][alley_consent]",
+            now_ms().to_string(),
+        ),
         // Stripe remplace `{CHECKOUT_SESSION_ID}` : le navigateur, de retour,
         // retrouve ainsi sa période et la garde.
         (

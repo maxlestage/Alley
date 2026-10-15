@@ -468,6 +468,150 @@ pub fn site() -> String {
         ],
     );
     s.rule(".bottom p", &[("margin", "0")]);
+    // Le pied de page : la marque, puis trois colonnes de liens.
+    s.rule(
+        ".bottom",
+        &[
+            ("display", "grid"),
+            ("gap", "28px"),
+            ("justify-content", "stretch"),
+            ("background", "var(--bg-2)"),
+        ],
+    );
+    s.rule(
+        ".footer-grid",
+        &[
+            ("display", "grid"),
+            (
+                "grid-template-columns",
+                "minmax(220px, 1.4fr) repeat(3, minmax(140px, 1fr))",
+            ),
+            ("gap", "32px"),
+            ("max-width", "1180px"),
+            ("width", "100%"),
+            ("margin", "0 auto"),
+        ],
+    );
+    s.rule(
+        ".footer-brand",
+        &[
+            ("display", "grid"),
+            ("gap", "14px"),
+            ("align-content", "start"),
+            ("justify-items", "start"),
+        ],
+    );
+    s.rule(
+        ".footer-brand p",
+        &[("max-width", "32ch"), ("font-size", "15px")],
+    );
+    s.rule(
+        ".bottom nav h2",
+        &[
+            ("margin", "0 0 10px"),
+            ("font-size", "13px"),
+            ("letter-spacing", ".08em"),
+            ("text-transform", "uppercase"),
+            ("color", "var(--fg)"),
+        ],
+    );
+    s.rule(
+        ".bottom nav ul",
+        &[
+            ("list-style", "none"),
+            ("margin", "0"),
+            ("padding", "0"),
+            ("display", "grid"),
+            ("gap", "8px"),
+        ],
+    );
+    s.rule(
+        ".bottom nav ul a",
+        &[
+            ("color", "var(--muted)"),
+            ("text-decoration", "none"),
+            ("font-size", "15px"),
+        ],
+    );
+    s.rule(
+        ".bottom nav ul a:hover, .bottom nav ul a:focus-visible",
+        &[("color", "var(--fg)"), ("text-decoration", "underline")],
+    );
+    s.rule(
+        ".footer-bar",
+        &[
+            ("display", "flex"),
+            ("flex-wrap", "wrap"),
+            ("align-items", "center"),
+            ("justify-content", "space-between"),
+            ("gap", "12px"),
+            ("max-width", "1180px"),
+            ("width", "100%"),
+            ("margin", "0 auto"),
+            ("padding-top", "20px"),
+            ("border-top", "1px solid var(--line)"),
+            ("font-size", "14px"),
+        ],
+    );
+    // Les tarifs.
+    s.rule(
+        ".prices",
+        &[(
+            "grid-template-columns",
+            "repeat(auto-fit, minmax(240px, 1fr))",
+        )],
+    );
+    s.rule(
+        ".price-card .amount",
+        &[
+            ("font-size", "30px"),
+            ("font-weight", "800"),
+            ("margin", "4px 0"),
+            ("color", "var(--fg)"),
+        ],
+    );
+    s.rule(
+        ".price-card .amount span",
+        &[
+            ("font-size", "15px"),
+            ("font-weight", "500"),
+            ("color", "var(--muted)"),
+        ],
+    );
+    s.rule(
+        ".hint.center",
+        &[("text-align", "center"), ("margin-top", "18px")],
+    );
+    // Les pages légales.
+    s.rule(
+        ".legal",
+        &[
+            ("display", "grid"),
+            ("gap", "6px"),
+            ("padding-bottom", "24px"),
+        ],
+    );
+    s.rule(
+        ".legal h1",
+        &[
+            ("font-size", "clamp(30px, 5vw, 44px)"),
+            ("margin", "8px 0 0"),
+        ],
+    );
+    s.rule(
+        ".legal h2",
+        &[("font-size", "21px"), ("margin", "26px 0 4px")],
+    );
+    s.rule(
+        ".legal p",
+        &[("margin", "6px 0"), ("color", "var(--muted)")],
+    );
+    s.rule(
+        ".legal .lead",
+        &[("font-size", "19px"), ("color", "var(--fg)")],
+    );
+    s.rule(".legal .updated", &[("font-size", "14px")]);
+    s.rule(".legal .button", &[("margin-top", "18px")]);
     // Les trois langues.
     s.rule(
         "nav.langs",
@@ -496,7 +640,6 @@ pub fn site() -> String {
             ("justify-items", "center"),
         ],
     );
-    s.rule(".bottom nav", &[("display", "flex"), ("gap", "20px")]);
     s.rule(
         ".notfound",
         &[
@@ -506,6 +649,8 @@ pub fn site() -> String {
         ],
     );
     s.media("(max-width: 860px)", |s| {
+        s.rule(".footer-grid", &[("grid-template-columns", "1fr 1fr")]);
+        s.rule(".footer-brand", &[("grid-column", "1 / -1")]);
         s.rule(".hero", &[("grid-template-columns", "1fr")]);
         s.rule(".pane.server", &[("transform", "none")]);
         s.rule(".top nav a:not(.button)", &[("display", "none")]);

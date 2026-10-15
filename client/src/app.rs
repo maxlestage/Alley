@@ -123,7 +123,20 @@ pub async fn buy(plan: &str) {
     let Some(account) = app(|a| a.account.clone()) else {
         return toast(t().pay_login, true);
     };
+    // Sans l'accord exprès, pas de paiement.
+    let consent = by_id("consent");
+    let given = consent
+        .as_ref()
+        .is_some_and(|c| c.unchecked_ref::<web_sys::HtmlInputElement>().checked());
+    if !given {
+        toast(t().consent_required, true);
+        if let Some(c) = consent {
+            focus(&c);
+        }
+        return;
+    }
     let body = json!({
+        "consent": true,
         "secret": account.billing,
         "plan": plan,
         "lang": i18n::lang().code(),
@@ -138,6 +151,7 @@ pub async fn buy(plan: &str) {
             }
         }
         Err(e) if e.code == "already_active" => toast(t().pass_already_active, true),
+        Err(e) if e.code == "consent_required" => toast(t().consent_required, true),
         Err(e) if e.banned() => show_banned(),
         Err(_) => toast(t().billing_unavailable, true),
     }
