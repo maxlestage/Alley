@@ -362,6 +362,11 @@ impl Signer {
         Signer(SigningKey::from_bytes(&random_bytes::<32>()))
     }
 
+    /// Une clé donnée (vecteurs de test de l'application iOS).
+    pub fn from_raw(raw: [u8; 32]) -> Self {
+        Signer(SigningKey::from_bytes(&raw))
+    }
+
     pub fn public_raw(&self) -> [u8; 32] {
         self.0.verifying_key().to_bytes()
     }

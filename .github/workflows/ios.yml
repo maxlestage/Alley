@@ -1,0 +1,30 @@
+# L'application iOS : le cœur (AlleyKit, `swift test`) et l'application
+# SwiftUI compilée pour le simulateur, sur un Mac de GitHub.
+name: iOS
+
+on:
+  push:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  pull_request:
+    paths: ["ios/**", ".github/workflows/ios.yml"]
+  workflow_dispatch:
+
+jobs:
+  ios:
+    name: iOS (AlleyKit et application)
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+      - name: AlleyKit — tests (chiffrement recoupé avec le navigateur, filtre, coffre)
+        run: swift test
+      - name: Projet Xcode (XcodeGen)
+        run: brew install xcodegen && xcodegen generate
+      - name: Application — compilation pour le simulateur
+        run: |
+          set -o pipefail
+          xcodebuild -project Alley.xcodeproj -scheme Alley \
+            -destination 'generic/platform=iOS Simulator' -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO build | tail -n 40

@@ -128,6 +128,10 @@ voir [Déploiement](#déploiement).
   `cargo xtask`). Ni JavaScript, ni CSS, ni script shell écrits à la main : le
   seul JavaScript livré est la colle que génère wasm-bindgen pour charger le
   module (un navigateur ne sait pas démarrer du WebAssembly sans elle).
+- 🍎 **Une application iPhone et iPad en Swift** ([`ios/`](ios/README.md)) : le
+  même chiffrement, octet pour octet (recoupé avec le navigateur par des
+  vecteurs de test et un salon partagé), les mêmes salons, les réactions,
+  les photos, les réglages.
 - 📱 **Sur tous les systèmes** : application web installable (iPhone et iPad
   via Safari → Partager → *Sur l'écran d'accueil*, Android, Windows, macOS,
   Linux, ChromeOS).
@@ -399,6 +403,7 @@ disparu au départ du dernier, et écran vidé à minuit (horloge simulée).
 | `client/src/sheets.rs`, `prefs.rs` | les fenêtres (créer, rejoindre, réglages, salon, menu ⋯, emoji) et les réglages de l'appareil |
 | `client/src/call.rs` | les appels WebRTC |
 | `client/src/site.rs` | la vitrine (installation selon l'appareil) |
+| `ios/` | l'application iPhone et iPad, en Swift et SwiftUI ([`ios/README.md`](ios/README.md)) |
 | `web/icons/`, `web/favicon.svg` | les icônes |
 | `xtask/` | `cargo xtask web` (le navigateur), `models` (les modèles), `merge`, `heroku`, `pages-enabled`, `api-url` (GitHub Actions), `prompts` (les empreintes CLIP) |
 | `tests/fixtures/` | une image ordinaire et une image montrant de la drogue, pour les tests |
