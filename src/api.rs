@@ -350,6 +350,29 @@ async fn live(req: Request, socket: ws::WebSocket) {
                     rooms.hand_key(&id, &me, to, blob);
                 }
             }
+            // L'administrateur renomme le salon (un nom permis seulement).
+            Some("rename") => {
+                let name = value["name"].as_str().unwrap_or_default();
+                let result = match check_text(name) {
+                    Some(_) => Err("forbidden_name"),
+                    None => rooms.rename(&id, &me, name),
+                };
+                match result {
+                    Ok(_) => {
+                        // Un salon de plusieurs jours garde son nouveau nom.
+                        if let Some(kept) = rooms.kept(&id)
+                            && let Err(e) = crate::billing::keep(req.db(), kept).await
+                        {
+                            tracing::warn!("salon renommé non gardé : {e}");
+                        }
+                    }
+                    Err(reason) => rooms.notify(
+                        &id,
+                        &me,
+                        &json!({ "type": "rename_refused", "reason": reason }),
+                    ),
+                }
+            }
             // L'administrateur exclut un membre.
             Some("expel") => {
                 if let Some(target) = to {
