@@ -30,6 +30,8 @@ final class AppModel {
     var mine: [RoomInfo] = []
     var loading = false
     var room: RoomSession?
+    /// L'appel en cours dans ce salon.
+    var call: CallEngine?
     var banned = false
     /// Le bandeau du moment.
     var toast: Toast?
@@ -233,12 +235,31 @@ final class AppModel {
     }
 
     func leave() {
+        leaveCall()
         room?.leave()
         room = nil
     }
 
+    /// Rejoint l'appel du salon (micro, puis caméra si on veut).
+    func joinCall() async {
+        guard let room, call == nil else { return }
+        guard room.hasKey else { return show(t.keyNotArrived, error: true) }
+        let engine = CallEngine(room: room, iceServers: await api.iceServers())
+        call = engine
+        if !(await engine.start()) {
+            call = nil
+            show(t.micDenied, error: true)
+        }
+    }
+
+    func leaveCall() {
+        call?.stop()
+        call = nil
+    }
+
     /// Le salon s'est fermé de lui-même : on dit pourquoi, et retour au hall.
     func closed(_ why: Closed) {
+        leaveCall()
         room = nil
         switch why {
         case .left: break

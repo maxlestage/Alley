@@ -42,6 +42,14 @@
 	<string>https://alley-app-6af9b14c3489.herokuapp.com</string>
 	<key>AlleyContact</key>
 	<string></string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Pour parler dans les appels et enregistrer des messages vocaux, chiffrés de bout en bout.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Pour partager votre caméra dans les appels vidéo, chiffrés de bout en bout.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

@@ -16,6 +16,10 @@ settings:
 packages:
   AlleyKit:
     path: .
+  # WebRTC (Google), compilé pour iOS : les appels audio et vidéo.
+  WebRTC:
+    url: https://github.com/stasel/WebRTC
+    from: 155.0.0
 targets:
   Alley:
     type: application
@@ -25,6 +29,8 @@ targets:
     dependencies:
       - package: AlleyKit
         product: AlleyKit
+      - package: WebRTC
+        product: WebRTC
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.alley.ios
