@@ -4,6 +4,9 @@
 //! - `/`, `/en/`, `/es/` : la vitrine qui présente Alley ;
 //! - `/app/`, `/en/app/`, `/es/app/` : l'application elle-même (construite par
 //!   le navigateur, en Rust compilé en WebAssembly) ;
+//! - `/legal/`, `/terms/`, `/privacy/`, `/rules/` (et leurs versions `/en/`,
+//!   `/es/`) : mentions légales, conditions, confidentialité, règles de la
+//!   communauté ([`crate::legal`]) ;
 //! - toute autre adresse : une page 404, dans les trois langues.
 //!
 //! Les mêmes pages sont servies par le serveur et exportées pour GitHub Pages
@@ -15,6 +18,7 @@ use paquets::vitesse::Response;
 use crate::Site;
 use crate::assets::{THEME_COLOR, WASM, WASM_JS, manifest_url, versioned};
 use crate::i18n::{LANGS, Lang};
+use crate::legal::{self, PUBLISHER};
 
 fn attr(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -40,12 +44,13 @@ fn head_tags(site: &Site, lang: Lang, path: &str) -> String {
         attr(&site.url(path))
     ));
     format!(
-        r#"<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/><link rel="manifest" href="{manifest}"/><meta name="theme-color" content="{THEME_COLOR}"/><meta name="color-scheme" content="dark light"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Alley"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><meta name="format-detection" content="telephone=no"/><link rel="icon" href="{favicon}" type="image/svg+xml"/><link rel="apple-touch-icon" href="{touch}"/>{alternates}<meta name="alley-base" content="{base}"/><meta name="alley-api" content="{api}"/>"#,
+        r#"<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"/><link rel="manifest" href="{manifest}"/><meta name="theme-color" content="{THEME_COLOR}"/><meta name="color-scheme" content="dark light"/><meta name="mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-capable" content="yes"/><meta name="apple-mobile-web-app-title" content="Alley"/><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/><meta name="format-detection" content="telephone=no"/><link rel="icon" href="{favicon}" type="image/svg+xml"/><link rel="apple-touch-icon" href="{touch}"/>{alternates}<meta name="alley-base" content="{base}"/><meta name="alley-api" content="{api}"/><meta name="alley-contact" content="{contact}"/>"#,
         manifest = attr(&site.url(&manifest_url(lang))),
         favicon = attr(&site.url("/assets/favicon.svg")),
         touch = attr(&site.url("/assets/apple-touch-icon.png")),
         base = attr(&site.base),
         api = attr(&site.api),
+        contact = attr(&PUBLISHER.email),
     )
 }
 
@@ -86,7 +91,101 @@ pub fn home(site: &Site, lang: Lang) -> Page {
         .body(features(lang))
         .body(security(lang))
         .body(platforms(lang))
+        .body(pricing(site, lang))
         .body(faq(lang))
+        .body(site_footer(site, lang))
+}
+
+/// Les tarifs : gratuit, ou une période payée une fois.
+fn pricing(site: &Site, lang: Lang) -> Element {
+    let l = legal::labels(lang);
+    let price = |cents: u32| {
+        let sep = if lang == Lang::En { "." } else { "," };
+        let amount = if cents == 0 {
+            "0".to_owned()
+        } else {
+            format!("{}{sep}{:02}", cents / 100, cents % 100)
+        };
+        if lang == Lang::En {
+            format!("€{amount}")
+        } else {
+            format!("{amount} €")
+        }
+    };
+    let mut grid = div().class("grid prices").child(
+        article()
+            .class("card price-card")
+            .child(h3().text(l.pricing_free))
+            .child(p().class("amount").text(price(0)))
+            .child(p().text(l.pricing_free_text)),
+    );
+    for plan in crate::billing::PLANS {
+        let days = plan.days.to_string();
+        grid = grid.child(
+            article()
+                .class("card price-card")
+                .child(h3().text(l.pricing_days.replace("{}", &days)))
+                .child(
+                    p().class("amount")
+                        .text(price(plan.cents))
+                        .child(span().text(format!(" · {}", l.pricing_once))),
+                )
+                .child(p().text(l.pricing_paid_text.replace("{}", &days))),
+        );
+    }
+    section()
+        .id("pricing")
+        .class("section")
+        .child(h2().text(l.pricing_title))
+        .child(p().class("section-lead").text(l.pricing_lead))
+        .child(grid)
+        .child(
+            p().class("hint center")
+                .text(l.pricing_note)
+                .child(text(" "))
+                .child(
+                    a().href(site.url(&lang.path("/terms/")))
+                        .text(legal::docs(lang)[1].title),
+                ),
+        )
+}
+
+/// Une page légale ou d'aide ([`legal::Doc`]).
+pub fn legal_page(site: &Site, lang: Lang, doc: &legal::Doc) -> Page {
+    let l = legal::labels(lang);
+    let path = format!("/{}/", doc.slug);
+    let mut article_ = article()
+        .class("legal")
+        .child(h1().text(doc.title))
+        .child(p().class("lead").text(doc.lead))
+        .child(
+            p().class("updated")
+                .text(format!("{} {}", l.updated, legal::updated(lang))),
+        );
+    for (title, paragraphs) in doc.sections {
+        let mut part = section().child(h2().text(*title));
+        for text_ in *paragraphs {
+            part = part.child(p().text(legal::fill(text_, lang)));
+        }
+        article_ = article_.child(part);
+    }
+    article_ = article_.child(
+        p().child(
+            a().class("button ghost")
+                .href(site.url(&lang.path("/")))
+                .text(l.back),
+        ),
+    );
+    Page::new(format!("{} — Alley", doc.title))
+        .lang(lang.code())
+        .description(doc.lead)
+        .seo(seo(site, lang, &path))
+        .plain()
+        .head(head_tags(site, lang, &path))
+        .stylesheet(versioned(site, "/assets/site.css"))
+        .head(boot(site, "site"))
+        .body(site_header(site, lang))
+        .body(html::main().class("section narrow").child(article_))
         .body(site_footer(site, lang))
 }
 
@@ -124,6 +223,11 @@ fn languages(site: &Site, lang: Lang, path: &str) -> Element {
     list
 }
 
+/// Une partie de la vitrine, depuis n'importe quelle page.
+fn anchor(site: &Site, lang: Lang, id: &str) -> String {
+    format!("{}#{id}", site.url(&lang.path("/")))
+}
+
 fn site_header(site: &Site, lang: Lang) -> Element {
     let t = lang.texts();
     header()
@@ -131,9 +235,19 @@ fn site_header(site: &Site, lang: Lang) -> Element {
         .child(logo(site, lang))
         .child(
             nav()
-                .child(a().href("#features").text(t.nav_features))
-                .child(a().href("#security").text(t.nav_security))
-                .child(a().href("#install").text(t.nav_install))
+                .child(
+                    a().href(anchor(site, lang, "features"))
+                        .text(t.nav_features),
+                )
+                .child(
+                    a().href(anchor(site, lang, "security"))
+                        .text(t.nav_security),
+                )
+                .child(
+                    a().href(anchor(site, lang, "pricing"))
+                        .text(legal::labels(lang).pricing),
+                )
+                .child(a().href(anchor(site, lang, "install")).text(t.nav_install))
                 .child(
                     a().class("button small")
                         .href(site.url(&lang.path("/app/")))
@@ -301,21 +415,83 @@ fn faq(lang: Lang) -> Element {
     section_
 }
 
+/// Le pied de page : la marque, puis le produit, l'aide et le légal, et les
+/// langues.
 fn site_footer(site: &Site, lang: Lang) -> Element {
     let t = lang.texts();
+    let l = legal::labels(lang);
+    let docs = legal::docs(lang);
+    let page = |slug: &str| site.url(&lang.path(&format!("/{slug}/")));
+    let column = |title: &'static str, links: Vec<Element>| {
+        let mut list = ul();
+        for link in links {
+            list = list.child(li().child(link));
+        }
+        nav()
+            .attr("aria-label", title)
+            .child(h2().text(title))
+            .child(list)
+    };
+    let product = column(
+        l.product,
+        vec![
+            a().href(site.url(&lang.path("/app/"))).text(t.open_app),
+            a().href(anchor(site, lang, "features"))
+                .text(t.nav_features),
+            a().href(anchor(site, lang, "security"))
+                .text(t.nav_security),
+            a().href(anchor(site, lang, "pricing")).text(l.pricing),
+            a().href(anchor(site, lang, "install")).text(t.nav_install),
+        ],
+    );
+    let help = column(
+        l.help,
+        vec![
+            a().href(anchor(site, lang, "faq")).text(l.faq),
+            a().href(page("rules")).text(docs[3].title),
+            a().href(PUBLISHER.contact_href()).text(l.contact),
+            a().href(format!("{}/api/v1/stats", site.api))
+                .text(l.status),
+            a().href(legal::SOURCE)
+                .attr("rel", "noopener")
+                .text(l.source),
+        ],
+    );
+    let legal_ = column(
+        l.legal,
+        vec![
+            a().href(page("legal")).text(docs[0].title),
+            a().href(page("terms")).text(docs[1].title),
+            a().href(page("privacy")).text(docs[2].title),
+        ],
+    );
     footer()
         .class("bottom")
-        .child(logo(site, lang))
-        .child(p().text(t.footer_made))
         .child(
-            nav()
-                .child(a().href(site.url(&lang.path("/app/"))).text(t.cta_enter))
+            div()
+                .class("footer-grid")
                 .child(
-                    a().href(format!("{}/api/v1/stats", site.api))
-                        .text(t.footer_server),
-                ),
+                    div()
+                        .class("footer-brand")
+                        .child(logo(site, lang))
+                        .child(p().text(l.tagline))
+                        .child(
+                            a().class("button small")
+                                .href(site.url(&lang.path("/app/")))
+                                .text(t.cta_enter),
+                        ),
+                )
+                .child(product)
+                .child(help)
+                .child(legal_),
         )
-        .child(languages(site, lang, "/"))
+        .child(
+            div()
+                .class("footer-bar")
+                .child(p().text(format!("© 2026 Alley. {}", l.rights)))
+                .child(p().text(t.footer_made))
+                .child(languages(site, lang, "/")),
+        )
 }
 
 /// L'application : seulement la coquille ; le WebAssembly déchiffre et affiche tout
@@ -434,6 +610,16 @@ pub fn routes(app: &mut App, site: &Site) {
             let s = s.clone();
             async move { respond(home(&s, lang), &s, &req) }
         });
+        for (i, doc) in legal::docs(lang).iter().enumerate() {
+            let s = site.clone();
+            app.get(
+                &lang.path(&format!("/{}/", doc.slug)),
+                move |req: Request| {
+                    let s = s.clone();
+                    async move { respond(legal_page(&s, lang, &legal::docs(lang)[i]), &s, &req) }
+                },
+            );
+        }
         // `/app` y mène aussi (Vitesse ignore la barre finale).
         let s = site.clone();
         app.get(&lang.path("/app/"), move |req: Request| {

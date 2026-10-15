@@ -66,6 +66,13 @@ pub async fn run(dir: &Path, site: &Site) -> std::io::Result<()> {
             app.clone(),
             format!("{}index.html", app.trim_start_matches('/')),
         ));
+        for doc in crate::legal::docs(lang) {
+            let path = lang.path(&format!("/{}/", doc.slug));
+            pages.push((
+                path.clone(),
+                format!("{}index.html", path.trim_start_matches('/')),
+            ));
+        }
     }
     for (from, to) in &pages {
         let res = client.get(from).await;
