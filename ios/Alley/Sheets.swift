@@ -1,7 +1,6 @@
 // Les présents, les réglages du salon, les réglages de l'application, et le
 // lecteur des messages vocaux.
 
-import AVFoundation
 import AlleyKit
 import Observation
 import SwiftUI
@@ -248,30 +247,5 @@ struct SettingsView: View {
                 Button(t.forgetAll, role: .destructive) { model.forgetAll() }
             }
         }
-    }
-}
-
-/// Lit un message vocal (AAC/MP4 d'un iPhone ou de Safari ; le WebM de
-/// Chrome n'est pas lisible par iOS).
-@Observable
-final class VoicePlayer: NSObject, AVAudioPlayerDelegate {
-    var playing = false
-    @ObservationIgnored var player: AVAudioPlayer?
-
-    func toggle(_ data: Data?) {
-        if playing {
-            player?.stop()
-            playing = false
-            return
-        }
-        guard let data, let p = try? AVAudioPlayer(data: data) else { return }
-        try? AVAudioSession.sharedInstance().setCategory(.playback)
-        p.delegate = self
-        player = p
-        playing = p.play()
-    }
-
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        DispatchQueue.main.async { self.playing = false }
     }
 }

@@ -163,6 +163,16 @@ public final class API: @unchecked Sendable {
         return key
     }
 
+    /// Les serveurs ICE des appels (STUN, et TURN s'il y en a) :
+    /// `[{"urls": [...], "username"?, "credential"?}]`.
+    public func iceServers() async -> [[String: Any]] {
+        let fallback: [[String: Any]] = [["urls": ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"]]]
+        guard let v = try? await request("GET", "/api/v1/ice") as? [String: Any],
+              let list = v["iceServers"] as? [[String: Any]], !list.isEmpty
+        else { return fallback }
+        return list
+    }
+
     /// Une requête anodine : refusée si cette adresse est bloquée.
     public func stats() async throws -> [String: Any] {
         (try await request("GET", "/api/v1/stats") as? [String: Any]) ?? [:]

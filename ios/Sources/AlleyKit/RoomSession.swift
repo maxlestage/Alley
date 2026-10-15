@@ -18,6 +18,10 @@ public struct Peer: Sendable {
     public var s: String?
     public var order: UInt64
     public var name: String?
+    /// Dans l'appel, micro coupé, caméra (ou écran) partagée.
+    public var voice = false
+    public var muted = false
+    public var video = false
     public var typingUntil: Date = .distantPast
     var seen = Replay()
     var warned = false
@@ -93,6 +97,15 @@ public final class RoomSession {
     @ObservationIgnored public var onIncoming: ((Message) -> Void)?
     /// Le salon a été renommé (pour la liste des salons de l'appareil).
     @ObservationIgnored public var onRenamed: ((RoomInfo) -> Void)?
+    /// Un message de l'appel (offre, réponse, candidat ICE) de `from`.
+    @ObservationIgnored public var onSignal: ((String, [String: Any]) -> Void)?
+    /// Qui est dans l'appel a changé.
+    @ObservationIgnored public var onCallChanged: (() -> Void)?
+
+    /// Mon état d'appel, annoncé à tous (`hello`).
+    public private(set) var inCall = false
+    public private(set) var muted = false
+    public private(set) var video = false
 
     @ObservationIgnored let api: API
     @ObservationIgnored let account: Account?
@@ -160,6 +173,8 @@ public final class RoomSession {
         messages.removeAll()
         key = nil
         pending.removeAll()
+        inCall = false
+        onCallChanged?()
     }
 
     var isClosed: Bool {
@@ -198,6 +213,7 @@ public final class RoomSession {
         peers.removeAll()
         pending.removeAll()
         me = ""
+        onCallChanged?()
         connect()
     }
 
@@ -233,7 +249,31 @@ public final class RoomSession {
 
     /// Mon pseudonyme, pour tous ou pour un nouvel arrivant.
     func hello(to: String? = nil) {
-        send("hello", ["n": pseudonym, "voice": false, "muted": false, "video": false], to: to)
+        send("hello", ["n": pseudonym, "voice": inCall, "muted": muted, "video": video], to: to)
+    }
+
+    // MARK: L'appel
+
+    /// Entre dans l'appel, ou en sort, coupe le micro, partage la caméra :
+    /// annoncé à tous.
+    public func setCall(inCall: Bool, muted: Bool = false, video: Bool = false) {
+        self.inCall = inCall
+        self.muted = inCall && muted
+        self.video = inCall && video
+        if key != nil { hello() }
+        onCallChanged?()
+    }
+
+    /// Ceux qui sont dans l'appel (moi compris, si j'y suis).
+    public var callMembers: [String] {
+        var ids = inCall ? [me] : []
+        ids += peers.filter(\.value.voice).map(\.key).sorted()
+        return ids
+    }
+
+    /// Un message de l'appel pour un seul membre (chiffré et signé).
+    public func signal(to: String, _ data: [String: Any]) {
+        send("signal", ["d": data], to: to)
     }
 
     static func newMid() -> String { Brocolis.hex(Brocolis.randomBytes(8)) }
@@ -279,6 +319,21 @@ public final class RoomSession {
             Message(
                 id: mid, from: me, name: pseudonym, date: Date(), kind: .image, text: "", media: jpeg,
                 mime: "image/jpeg", reply: reply ?? "", mine: true, pending: true))
+        trim()
+    }
+
+    /// Envoie un message vocal (`mime` : `audio/mp4` depuis l'iPhone).
+    public func sendAudio(_ audio: Data, mime: String, reply: String? = nil) {
+        guard key != nil else {
+            notice = .keyNotArrived
+            return
+        }
+        let mid = RoomSession.newMid()
+        send("msg", ["mid": mid, "kind": "audio", "x": Brocolis.b64(audio), "m": mime, "r": reply ?? ""])
+        messages.append(
+            Message(
+                id: mid, from: me, name: pseudonym, date: Date(), kind: .audio, text: "", media: audio,
+                mime: mime, reply: reply ?? "", mine: true))
         trim()
     }
 
@@ -419,7 +474,9 @@ public final class RoomSession {
             pending.removeAll()
             for e in waiting { relay(e) }
         case "left":
+            let wasInCall = peers[str("id")]?.voice == true
             peers[str("id")] = nil
+            if wasInCall { onCallChanged?() }
         case "relay":
             if key == nil {
                 pending.append(event)
@@ -518,6 +575,12 @@ public final class RoomSession {
             var name = String(str("n").prefix(32))
             if Moderation.check(name) != nil { name = "" }
             peers[from]?.name = name.trimmingCharacters(in: .whitespaces).isEmpty ? guestName(from) : name
+            let voice = p["voice"] as? Bool ?? false
+            let callChanged = peers[from]?.voice != voice || peers[from]?.video != (p["video"] as? Bool ?? false)
+            peers[from]?.voice = voice
+            peers[from]?.muted = p["muted"] as? Bool ?? false
+            peers[from]?.video = p["video"] as? Bool ?? false
+            if callChanged { onCallChanged?() }
             // Les messages déjà là prennent son nom.
             for i in messages.indices where messages[i].from == from { messages[i].name = self.name(of: from) }
         case "msg":
@@ -560,6 +623,8 @@ public final class RoomSession {
             RoomSession.apply(&messages[i].reactions, e, who: from, on: p["on"] as? Bool ?? false)
         case "typing":
             peers[from]?.typingUntil = Date().addingTimeInterval(6)
+        case "signal":
+            if let d = p["d"] as? [String: Any] { onSignal?(from, d) }
         default:
             break
         }
