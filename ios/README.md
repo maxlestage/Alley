@@ -36,7 +36,32 @@ Une période payée sur le site s'applique bien aux salons créés depuis l'iPho
 | `Tests/AlleyKitTests/` | les tests. `vectors.json` est produit par le code Rust du navigateur (`cargo run -p alley-web --example vectors`) : AlleyKit doit l'ouvrir |
 | `Alley/` | l'application SwiftUI : écrans, textes en trois langues, trousseau, notifications, icône |
 | `project.yml` | le projet Xcode, pour [XcodeGen](https://github.com/yonaskolb/XcodeGen) |
+| `ci/` | l'envoi sur TestFlight depuis GitHub Actions (`asc.py` : App Store Connect ; `ExportOptions.plist`) |
 | `interop.mjs` | un navigateur (Playwright) et AlleyKit dans le même salon |
+
+## Sans ordinateur : TestFlight depuis l'iPhone
+
+Un Mac de GitHub compile l'application, la signe et l'envoie sur TestFlight (workflow `TestFlight`). Vous l'installez ensuite avec l'app TestFlight. Tout se fait depuis l'iPhone, dans Safari.
+
+1. **Compte Apple Developer** (99 € par an). Dans l'app *Apple Developer* de l'iPhone : *Compte* → *S'inscrire*.
+2. **Clé d'API.** Sur [appstoreconnect.apple.com](https://appstoreconnect.apple.com), allez dans *Utilisateurs et accès* → *Intégrations* → *Clés API App Store Connect* → **+**. Donnez-lui un nom, l'accès *Admin*, puis *Générer*.
+   - Notez l'**Issuer ID** (en haut) et l'**ID de la clé**.
+   - Téléchargez la clé : un fichier `AuthKey_….p8`, dans l'app *Fichiers*. Ce téléchargement n'est possible qu'une fois.
+   - Pour en copier le texte : dans *Fichiers*, renommez-le en `.txt`, ouvrez-le, puis *Tout sélectionner* → *Copier*.
+3. **Secrets GitHub.** Sur github.com, dans le dépôt Alley : *Settings* → *Secrets and variables* → *Actions* → *New repository secret*. Créez-en trois :
+   - `ASC_KEY_ID` : l'ID de la clé ;
+   - `ASC_ISSUER_ID` : l'Issuer ID ;
+   - `ASC_KEY` : tout le texte du fichier, de `-----BEGIN PRIVATE KEY-----` à `-----END PRIVATE KEY-----`.
+4. **Premier lancement.** *Actions* → *TestFlight* → *Run workflow*. Il enregistre l'identifiant `app.alley.ios`, puis s'arrête en demandant de créer l'app.
+5. **L'app dans App Store Connect.** *Apps* → **+** → *Nouvelle app* :
+   - plateforme iOS, nom « Alley », langue Français ;
+   - identifiant de bundle `app.alley.ios`, SKU `alley`.
+
+   Puis relancez le workflow. Il compile, signe et envoie l'app, et ajoute toute l'équipe aux testeurs internes.
+6. **Sur l'iPhone.** Installez l'app *TestFlight* depuis l'App Store. Après le traitement par Apple (10 à 30 minutes), Alley y apparaît : *Installer*.
+   - Si App Store Connect pose la question du chiffrement sur la version : Alley chiffre les messages de bout en bout avec des algorithmes standard (AES-GCM, X25519, Ed25519).
+
+Ensuite, chaque modification de `ios/` fusionnée dans `master` envoie automatiquement une nouvelle version sur TestFlight.
 
 ## Ouvrir dans Xcode
 
