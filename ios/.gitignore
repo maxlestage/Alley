@@ -2,3 +2,4 @@
 node_modules
 *.xcodeproj
 .swiftpm/
+__pycache__/
