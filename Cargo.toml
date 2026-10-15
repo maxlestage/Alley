@@ -40,6 +40,11 @@ tracing = "0.1"
 tract-onnx = "0.23.8"
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 alley-moderation = { path = "moderation" }
+# Les achats sur iPhone : la transaction signée par l'App Store (JWS, chaîne
+# de certificats jusqu'à l'Apple Root CA - G3), vérifiée par le serveur.
+x509-cert = "0.2"
+p256 = { version = "0.13", features = ["ecdsa"] }
+p384 = { version = "0.13", features = ["ecdsa"] }
 
 [dev-dependencies]
 # Les tests chiffrent exactement comme le navigateur : avec le même code Rust.
@@ -47,6 +52,8 @@ alley-web = { path = "client" }
 # De vrais salons, en vraie WebSocket.
 tokio-tungstenite = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# Une fausse chaîne de certificats « Apple » pour tester les achats sur iPhone.
+rcgen = "0.13"
 
 # Les modèles de modération calculent beaucoup : optimisés même en test.
 [profile.dev.package.tract-linalg]

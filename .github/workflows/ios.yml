@@ -24,7 +24,10 @@ jobs:
         run: brew install xcodegen && xcodegen generate
       - name: Application — compilation pour le simulateur
         run: |
-          set -o pipefail
           xcodebuild -project Alley.xcodeproj -scheme Alley \
             -destination 'generic/platform=iOS Simulator' -configuration Debug \
-            CODE_SIGNING_ALLOWED=NO build | tail -n 40
+            CODE_SIGNING_ALLOWED=NO build > build.log 2>&1 && status=0 || status=$?
+          # Les erreurs d'abord (le journal complet est très long).
+          grep -E "error:|warning: .*(deprecated|never)" build.log | sort -u | head -n 80 || true
+          tail -n 15 build.log
+          exit $status

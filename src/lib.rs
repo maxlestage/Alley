@@ -25,6 +25,7 @@
 //!   ChromeOS) et peut être publié seul sur GitHub Pages ([`export`]).
 
 pub mod api;
+pub mod apple;
 pub mod assets;
 pub mod billing;
 pub mod export;

@@ -381,6 +381,9 @@ pub struct Billing {
     /// l'offre n'est alors pas proposée.
     durable: Arc<AtomicBool>,
     cache: Arc<Mutex<Cache>>,
+    /// La racine qui signe les achats sur iPhone (Apple Root CA - G3 ; une
+    /// autre dans les tests).
+    apple_root: Arc<Vec<u8>>,
 }
 
 impl Billing {
@@ -389,7 +392,14 @@ impl Billing {
             stripe: Stripe::from_env(),
             durable: Arc::new(AtomicBool::new(env_signing_key().is_some())),
             cache: Arc::default(),
+            apple_root: Arc::new(crate::apple::APPLE_ROOT_G3.to_vec()),
         }
+    }
+
+    /// Une autre racine pour les achats sur iPhone (tests).
+    pub fn with_apple_root(mut self, root: Vec<u8>) -> Billing {
+        self.apple_root = Arc::new(root);
+        self
     }
 
     /// Au démarrage : SQLite garde la clé de signature, sauf sur un
@@ -497,11 +507,46 @@ impl Billing {
         }
     }
 
+    /// Les salons de plusieurs jours peuvent-ils survivre aux redémarrages
+    /// (une clé de signature durable) ? Nécessaire pour vendre une période.
+    pub fn durable(&self) -> bool {
+        self.durable.load(Ordering::Relaxed)
+    }
+
+    /// La période d'un achat sur iPhone (`apple:<transaction signée>`), si
+    /// elle est à ce compte.
+    pub fn apple_pass(&self, secret: &str, payment: &str, offset: i64) -> Option<Pass> {
+        let jws = payment.strip_prefix("apple:")?;
+        let billing = billing_id(secret)?;
+        match crate::apple::pass(jws, &billing, offset, &self.apple_root) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                tracing::warn!("achat iPhone refusé : {e}");
+                None
+            }
+        }
+    }
+
     /// Jusqu'à quand restent ouverts les salons que crée ce compte : la fin
-    /// de sa période payée, ou `None` (minuit).
-    pub async fn until_for(&self, secret: Option<&str>, payment: Option<&str>) -> Option<i64> {
-        self.ready()?;
+    /// de sa période payée, ou `None` (minuit). `offset` : le décalage
+    /// horaire du créateur (un achat sur iPhone finit à minuit chez lui).
+    pub async fn until_for(
+        &self,
+        secret: Option<&str>,
+        payment: Option<&str>,
+        offset: i64,
+    ) -> Option<i64> {
         let now = now_ms();
+        if let Some(apple) = payment.filter(|p| p.starts_with("apple:")) {
+            if !self.durable() {
+                return None;
+            }
+            return self
+                .apple_pass(secret?, apple, offset)
+                .filter(|p| p.active(now))
+                .map(|p| p.end);
+        }
+        self.ready()?;
         match self.lookup(secret?, payment).await {
             Ok(Some(p)) if p.active(now) => Some(p.end),
             Ok(_) => None,
@@ -564,6 +609,10 @@ pub struct Status {
     /// De retour de Stripe Checkout : la session payée.
     #[serde(default)]
     pub session: Option<String>,
+    /// Le décalage horaire, en minutes (un achat sur iPhone finit à minuit
+    /// chez lui).
+    #[serde(default)]
+    pub tz: i64,
 }
 
 /// `GET /api/v1/plans` : les périodes, payées une fois.
@@ -677,6 +726,14 @@ async fn status(req: Request) -> (u16, Json<Value>) {
     let Some(id) = billing_id(&body.secret) else {
         return fail(400, "bad_request");
     };
+    // Un achat sur iPhone : la transaction signée suffit.
+    if let Some(apple) = body.payment.as_deref().filter(|p| p.starts_with("apple:")) {
+        let now = now_ms();
+        return match billing.apple_pass(&body.secret, apple, body.tz) {
+            Some(p) => (200, Json(p.to_json(now))),
+            None => (200, Json(json!({ "active": false }))),
+        };
+    }
     let Some(stripe) = billing.stripe.clone() else {
         return (200, Json(json!({ "active": false })));
     };
@@ -773,6 +830,50 @@ mod tests {
         assert_eq!(
             pass(&pi(&b, "succeeded", 1, false), &b).unwrap().status,
             "pending"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_iphone_purchase_opens_a_period_without_stripe() {
+        use crate::apple::tests::{Chain, transaction};
+        let chain = Chain::new(true);
+        let billing = Billing {
+            stripe: None,
+            durable: Arc::new(AtomicBool::new(true)),
+            cache: Arc::default(),
+            apple_root: Arc::new(Vec::new()),
+        }
+        .with_apple_root(chain.root.clone());
+        let secret = "5".repeat(64);
+        let id = billing_id(&secret).unwrap();
+        let now = now_ms();
+        let jws = chain.sign(&transaction(&id, "3m", now - 60_000));
+        let payment = format!("apple:{jws}");
+        let until = billing
+            .until_for(Some(&secret), Some(&payment), 60)
+            .await
+            .unwrap();
+        assert_eq!(until, period_end(now - 60_000, 60, 90));
+        // Le secret d'un autre compte : rien.
+        assert_eq!(
+            billing
+                .until_for(Some(&"6".repeat(64)), Some(&payment), 60)
+                .await,
+            None
+        );
+        // Une période finie : rien.
+        let old = chain.sign(&transaction(&id, "3d", now - 10 * 86_400_000));
+        assert_eq!(
+            billing
+                .until_for(Some(&secret), Some(&format!("apple:{old}")), 0)
+                .await,
+            None
+        );
+        // Sans clé de signature durable, pas de salon de plusieurs jours.
+        billing.durable.store(false, Ordering::Relaxed);
+        assert_eq!(
+            billing.until_for(Some(&secret), Some(&payment), 60).await,
+            None
         );
     }
 
