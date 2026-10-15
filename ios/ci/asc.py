@@ -19,7 +19,7 @@ import urllib.request
 import jwt
 
 API = "https://api.appstoreconnect.apple.com/v1"
-BUNDLE_ID = os.environ.get("BUNDLE_ID", "app.alley.ios")
+BUNDLE_ID = os.environ.get("BUNDLE_ID", "com.maxlestage.alley")
 APP_NAME = "Alley"
 GROUP = "Alley"
 
@@ -163,7 +163,7 @@ PERIODS = [
                      "en-US": ("3 months", "Your rooms stay open for 3 months."),
                      "es-ES": ("3 meses", "Tus salas siguen abiertas 3 meses.")}),
 ]
-PREFIX = "app.alley.ios.period."
+PREFIX = "com.maxlestage.alley.period."
 REVIEW_NOTE = (
     "Paiement unique (pas d'abonnement) : pendant la période, les salons créés par ce compte "
     "restent ouverts au lieu de disparaître à minuit. Achat lié au compte Alley connecté."
