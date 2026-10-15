@@ -211,6 +211,14 @@ fn welcome() -> El {
                     }),
             )
             .child(h("p.small.muted").text(t.guest_hint))
+            .child(
+                h("p.small.muted.accept")
+                    .text(t.accept_prefix)
+                    .child(site_link("terms", t.terms_link))
+                    .text(t.accept_and)
+                    .child(site_link("rules", t.rules_link))
+                    .text("."),
+            )
             .child(h("p.small.muted").text(t.footer))
             .on("submit", move |e| {
                 e.prevent_default();
@@ -408,7 +416,8 @@ fn lobby() -> El {
                         .child(h("span").text(t.private_room)),
                 )
                 .child(h("div#rooms.rooms").attr("aria-live", "polite"))
-                .child(h("section#plans.plans").attr("hidden", "")),
+                .child(h("section#plans.plans").attr("hidden", ""))
+                .child(app_footer()),
         )
 }
 
@@ -582,6 +591,83 @@ pub fn render_rooms() {
     });
 }
 
+/// Une page de la vitrine (aide, règles, conditions…), dans la langue
+/// choisie, ouverte à côté de l'application.
+fn site_link(slug: &str, label: &str) -> El {
+    let href = if slug == "faq" {
+        format!("{}{}/#faq", base(), i18n::lang().prefix())
+    } else {
+        format!("{}{}/{slug}/", base(), i18n::lang().prefix())
+    };
+    h("a")
+        .attr("href", href)
+        .attr("target", "_blank")
+        .attr("rel", "noopener")
+        .text(label)
+}
+
+/// L'adresse de contact de l'éditeur (`<meta name="alley-contact">`).
+fn contact_email() -> String {
+    meta("alley-contact")
+}
+
+/// Le bas du hall : aide, règles, conditions, confidentialité, contact.
+fn app_footer() -> El {
+    let t = t();
+    let email = contact_email();
+    let contact = if email.is_empty() {
+        "https://github.com/maxlestage/Alley/issues".to_owned()
+    } else {
+        format!("mailto:{email}")
+    };
+    h("footer.app-footer")
+        .child(site_link("faq", t.help_link))
+        .child(site_link("rules", t.rules_title))
+        .child(site_link("terms", t.terms_title))
+        .child(site_link("privacy", t.privacy_link))
+        .child(site_link("legal", t.legal_link))
+        .child(
+            h("a")
+                .attr("href", contact)
+                .attr("target", "_blank")
+                .attr("rel", "noopener")
+                .text(t.contact_link),
+        )
+}
+
+/// Signaler un abus dans un salon : un e-mail à l'éditeur, prérempli avec
+/// le salon et l'heure (les messages, chiffrés, ne peuvent pas être joints).
+/// Seulement si une adresse de contact est configurée : un signalement ne
+/// doit jamais être public.
+fn report_button(name: &str) -> Option<El> {
+    let email = contact_email();
+    if email.is_empty() {
+        return None;
+    }
+    let name = name.to_owned();
+    let link = h("a.icon-btn.report")
+        .attr("title", t().report)
+        .attr("aria-label", t().report)
+        .attr("href", format!("mailto:{email}"))
+        .text("⚑");
+    let el = link.0.clone();
+    // L'adresse se compose au clic : le salon et l'heure du signalement.
+    Some(link.on("click", move |_| {
+        let t = t();
+        let room = room().map(|r| r.borrow().id.clone()).unwrap_or_default();
+        let when = js_sys::Date::new_0().to_locale_string("default", &JsValue::UNDEFINED);
+        let subject = fill(t.report_subject, &[&name]);
+        let body = fill(t.report_body, &[&name, &room, &String::from(when)]);
+        let enc = |s: &str| String::from(js_sys::encode_uri_component(s));
+        let href = format!(
+            "mailto:{email}?subject={}&body={}",
+            enc(&subject),
+            enc(&body)
+        );
+        let _ = el.set_attribute("href", &href);
+    }))
+}
+
 /// Un prix payé une fois (`4,99 €`).
 fn price(cents: u64) -> String {
     let sep = if i18n::lang() == Lang::En { "." } else { "," };
@@ -612,6 +698,21 @@ pub fn render_plans() {
                 items.push(h("p.subscribed").text(fill(t.pass_active, &[&end])).into());
             }
             None => {
+                if signed_in {
+                    // L'accord exprès, avant tout paiement : les conditions de
+                    // vente, et une période qui commence tout de suite.
+                    items.push(
+                        h("label.check.small.consent")
+                            .child(h("input#consent").attr("type", "checkbox"))
+                            .child(
+                                h("span")
+                                    .text(t.consent_before)
+                                    .child(site_link("terms", t.terms_sale))
+                                    .text(t.consent_after),
+                            )
+                            .into(),
+                    );
+                }
                 let cards = plans["plans"].as_array().cloned().unwrap_or_default();
                 items.push(
                     h("div.plan-cards")
@@ -731,7 +832,8 @@ pub fn render_room() {
                         }
                     }),
             )
-            .child(icon_btn(t.members, "👥").on("click", |_| toggle_members(None)));
+            .child(icon_btn(t.members, "👥").on("click", |_| toggle_members(None)))
+            .child(report_button(&name));
         let layout = h("div.layout.room-layout")
             .class_if("members-open", show)
             .child(

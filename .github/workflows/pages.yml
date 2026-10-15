@@ -83,6 +83,11 @@ jobs:
         env:
           BASE_PATH: ${{ steps.pages.outputs.base_path }}
           ALLEY_API_URL: ${{ steps.api.outputs.url }}
+          # Les coordonnées de l'éditeur (pages légales, contact).
+          ALLEY_PUBLISHER: ${{ vars.ALLEY_PUBLISHER }}
+          ALLEY_PUBLISHER_ADDRESS: ${{ vars.ALLEY_PUBLISHER_ADDRESS }}
+          ALLEY_PUBLISHER_ID: ${{ vars.ALLEY_PUBLISHER_ID }}
+          ALLEY_CONTACT_EMAIL: ${{ vars.ALLEY_CONTACT_EMAIL }}
         run: cargo run --release -- export dist
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -217,7 +217,15 @@ async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
 
     let secret = "5e".repeat(32);
     let back = "https://maxlestage.github.io/Alley/app/";
-    let checkout = |plan: &str, back: &str| json!({ "secret": secret, "plan": plan, "lang": "fr", "tz": 120, "return_to": back });
+    let checkout = |plan: &str, back: &str| json!({ "secret": secret, "plan": plan, "lang": "fr", "tz": 120, "return_to": back, "consent": true });
+    // Sans accord exprès (conditions, renonciation à la rétractation) : refusé.
+    let mut no_consent = checkout("3d", back);
+    no_consent["consent"] = json!(false);
+    let (status, body) = post(&client, "/api/v1/billing/checkout", no_consent).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (400, Some("consent_required"))
+    );
     let evil = checkout("3d", "https://evil.example/");
     assert_eq!(post(&client, "/api/v1/billing/checkout", evil).await.0, 400);
     let monthly = checkout("1m", back);
@@ -241,6 +249,11 @@ async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
         assert_eq!(f["line_items[0][price_data][unit_amount]"], "499");
         assert_eq!(f["line_items[0][price_data][currency]"], "eur");
         assert_eq!(f["payment_intent_data[metadata][alley_tz]"], "120");
+        assert!(
+            f["payment_intent_data[metadata][alley_consent]"]
+                .parse::<i64>()
+                .is_ok()
+        );
         assert_eq!(
             f["success_url"],
             format!("{back}#periode={{CHECKOUT_SESSION_ID}}")
@@ -366,7 +379,7 @@ async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
     let (_, body) = post(
         &sqlite,
         "/api/v1/billing/checkout",
-        json!({ "secret": secret7, "plan": "7d", "tz": 0, "return_to": back }),
+        json!({ "secret": secret7, "plan": "7d", "tz": 0, "return_to": back, "consent": true }),
     )
     .await;
     let pi = body["url"]
