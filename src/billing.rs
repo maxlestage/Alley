@@ -1,13 +1,15 @@
 //! Les périodes payantes, avec **Stripe** : on paie **une fois** une période
-//! de 3 ou de 7 jours — ni abonnement, ni renouvellement, rien à résilier.
+//! de 3 jours, 7 jours, 1 mois ou 3 mois — ni abonnement, ni renouvellement.
 //!
 //! | Période | Prix, en une fois |
 //! |---|---|
 //! | `3d` : 3 jours | 4,99 € |
 //! | `7d` : 7 jours | 9,99 € |
+//! | `1m` : 1 mois (30 jours) | 14,99 € |
+//! | `3m` : 3 mois (90 jours) | 34,99 € |
 //!
 //! Pendant sa période, les salons que crée l'acheteur restent ouverts jusqu'à
-//! la fin de celle-ci (le minuit, chez lui, qui clôt le 3ᵉ ou le 7ᵉ jour) au
+//! la fin de celle-ci (le minuit, chez lui, qui clôt son dernier jour) au
 //! lieu de disparaître à minuit. **Aucun message n'est gardé** pour autant.
 //! Le paiement est un paiement unique (Stripe Checkout, `mode=payment`) :
 //! rien n'est jamais reprélevé.
@@ -57,18 +59,34 @@ pub struct Plan {
     pub days: u32,
     /// Son prix, payé une fois, en centimes d'euro.
     pub cents: u32,
+    /// En mois, pour l'affichage (0 : une période en jours).
+    pub months: u32,
 }
 
-pub const PLANS: [Plan; 2] = [
+pub const PLANS: [Plan; 4] = [
     Plan {
         id: "3d",
         days: 3,
         cents: 499,
+        months: 0,
     },
     Plan {
         id: "7d",
         days: 7,
         cents: 999,
+        months: 0,
+    },
+    Plan {
+        id: "1m",
+        days: 30,
+        cents: 1499,
+        months: 1,
+    },
+    Plan {
+        id: "3m",
+        days: 90,
+        cents: 3499,
+        months: 3,
     },
 ];
 
@@ -553,7 +571,7 @@ async fn plans(req: Request) -> Json<Value> {
     let enabled = req.state::<Billing>().ready().is_some();
     let plans: Vec<Value> = PLANS
         .iter()
-        .map(|p| json!({ "id": p.id, "days": p.days, "amount": p.cents }))
+        .map(|p| json!({ "id": p.id, "days": p.days, "months": p.months, "amount": p.cents }))
         .collect();
     Json(json!({
         "enabled": enabled,
@@ -703,7 +721,15 @@ mod tests {
     fn periods_are_paid_once() {
         assert_eq!(plan("3d").map(|p| (p.days, p.cents)), Some((3, 499)));
         assert_eq!(plan("7d").map(|p| (p.days, p.cents)), Some((7, 999)));
-        assert_eq!(plan("1m"), None);
+        assert_eq!(
+            plan("1m").map(|p| (p.days, p.cents, p.months)),
+            Some((30, 1499, 1))
+        );
+        assert_eq!(
+            plan("3m").map(|p| (p.days, p.cents, p.months)),
+            Some((90, 3499, 3))
+        );
+        assert_eq!(plan("1y"), None, "rien à l'année");
     }
 
     #[test]

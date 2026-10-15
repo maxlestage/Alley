@@ -208,11 +208,19 @@ async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
     );
     assert_eq!(
         plans["plans"][0],
-        json!({ "id": "3d", "days": 3, "amount": 499 })
+        json!({ "id": "3d", "days": 3, "months": 0, "amount": 499 })
     );
     assert_eq!(
         plans["plans"][1],
-        json!({ "id": "7d", "days": 7, "amount": 999 })
+        json!({ "id": "7d", "days": 7, "months": 0, "amount": 999 })
+    );
+    assert_eq!(
+        plans["plans"][2],
+        json!({ "id": "1m", "days": 30, "months": 1, "amount": 1499 })
+    );
+    assert_eq!(
+        plans["plans"][3],
+        json!({ "id": "3m", "days": 90, "months": 3, "amount": 3499 })
     );
 
     let secret = "5e".repeat(32);
@@ -228,9 +236,10 @@ async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
     );
     let evil = checkout("3d", "https://evil.example/");
     assert_eq!(post(&client, "/api/v1/billing/checkout", evil).await.0, 400);
-    let monthly = checkout("1m", back);
+    // Rien à l'année.
+    let yearly = checkout("1y", back);
     assert_eq!(
-        post(&client, "/api/v1/billing/checkout", monthly).await.0,
+        post(&client, "/api/v1/billing/checkout", yearly).await.0,
         400
     );
     let (status, body) = post(&client, "/api/v1/billing/checkout", checkout("3d", back)).await;
@@ -393,6 +402,33 @@ async fn a_period_is_paid_once_and_rooms_last_until_it_ends() {
     let week = json!({ "name": "Semaine", "billing": secret7, "payment": pi });
     let (_, week) = post(&sqlite, "/api/v1/rooms", week).await;
     assert!(left(&week) > 6 * DAY && left(&week) <= 7 * DAY);
+    // Trois mois : un salon ouvert 90 jours.
+    let secret3 = "3c".repeat(32);
+    let (_, body) = post(
+        &sqlite,
+        "/api/v1/billing/checkout",
+        json!({ "secret": secret3, "plan": "3m", "tz": 0, "return_to": back, "consent": true }),
+    )
+    .await;
+    let pi3 = body["url"]
+        .as_str()
+        .unwrap()
+        .rsplit("cs_")
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        STRIPE.lock().unwrap().checkout["line_items[0][price_data][unit_amount]"],
+        "3499"
+    );
+    pay(&pi3);
+    let quarter = json!({ "name": "Trimestre", "billing": secret3, "payment": pi3 });
+    let (_, quarter) = post(&sqlite, "/api/v1/rooms", quarter).await;
+    assert!(
+        left(&quarter) > 89 * DAY && left(&quarter) <= 90 * DAY,
+        "{}",
+        left(&quarter)
+    );
     let restarted = alley_with(&db).await;
     let wid = week["id"].as_str().unwrap();
     let found = restarted.get(&format!("/api/v1/rooms/{wid}")).await;

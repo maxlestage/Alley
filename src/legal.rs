@@ -106,6 +106,8 @@ pub struct Labels {
     pub pricing_lead: &'static str,
     pub pricing_once: &'static str,
     pub pricing_days: &'static str,
+    pub pricing_month_one: &'static str,
+    pub pricing_months: &'static str,
     pub pricing_free: &'static str,
     pub pricing_free_text: &'static str,
     pub pricing_paid_text: &'static str,
@@ -176,9 +178,11 @@ static LABELS_FR: Labels = Labels {
     pricing_lead: "Alley est gratuit. Si vous voulez que vos salons durent plus longtemps qu'une journée, payez une période, une seule fois.",
     pricing_once: "en une fois",
     pricing_days: "{} jours",
+    pricing_month_one: "1 mois",
+    pricing_months: "{} mois",
     pricing_free: "Gratuit",
     pricing_free_text: "Salons illimités, messages, photos, vocaux, appels audio et vidéo, partage d'écran. Chaque salon ferme à minuit.",
-    pricing_paid_text: "Pendant {} jours, les salons que vous créez restent ouverts jusqu'à la fin de la période au lieu de disparaître à minuit.",
+    pricing_paid_text: "Pendant {}, les salons que vous créez restent ouverts jusqu'à la fin de la période au lieu de disparaître à minuit.",
     pricing_note: "Pas d'abonnement, rien ne se renouvelle, rien à résilier. Paiement sécurisé par Stripe ; Alley ne voit jamais votre carte. Prix TTC.",
 };
 
@@ -201,9 +205,11 @@ static LABELS_EN: Labels = Labels {
     pricing_lead: "Alley is free. If you want your rooms to last longer than a day, pay for a period, once.",
     pricing_once: "one-time",
     pricing_days: "{} days",
+    pricing_month_one: "1 month",
+    pricing_months: "{} months",
     pricing_free: "Free",
     pricing_free_text: "Unlimited rooms, messages, photos, voice notes, audio and video calls, screen sharing. Each room closes at midnight.",
-    pricing_paid_text: "For {} days, the rooms you create stay open until the period ends instead of disappearing at midnight.",
+    pricing_paid_text: "For {}, the rooms you create stay open until the period ends instead of disappearing at midnight.",
     pricing_note: "No subscription, nothing renews, nothing to cancel. Secure payment by Stripe; Alley never sees your card. VAT included.",
 };
 
@@ -226,9 +232,11 @@ static LABELS_ES: Labels = Labels {
     pricing_lead: "Alley es gratis. Si quieres que tus salas duren más de un día, paga un periodo, una sola vez.",
     pricing_once: "un solo pago",
     pricing_days: "{} días",
+    pricing_month_one: "1 mes",
+    pricing_months: "{} meses",
     pricing_free: "Gratis",
     pricing_free_text: "Salas ilimitadas, mensajes, fotos, notas de voz, llamadas de audio y vídeo, compartir pantalla. Cada sala cierra a medianoche.",
-    pricing_paid_text: "Durante {} días, las salas que creas siguen abiertas hasta el final del periodo en lugar de desaparecer a medianoche.",
+    pricing_paid_text: "Durante {}, las salas que creas siguen abiertas hasta el final del periodo en lugar de desaparecer a medianoche.",
     pricing_note: "Sin suscripción, nada se renueva, nada que cancelar. Pago seguro con Stripe; Alley nunca ve tu tarjeta. IVA incluido.",
 };
 
@@ -304,8 +312,8 @@ static DOCS_FR: [Doc; 4] = [
             (
                 "4. Les périodes payantes",
                 &[
-                    "Une période coûte 4,99 € pour 3 jours ou 9,99 € pour 7 jours, toutes taxes comprises. Elle se paie une seule fois, par carte, via Stripe. Ce n'est pas un abonnement : rien ne se renouvelle et rien n'est jamais reprélevé.",
-                    "La période commence au paiement et se termine au minuit qui clôt son 3ᵉ ou son 7ᵉ jour, dans le fuseau horaire de l'acheteur. Pendant la période, les salons que l'acheteur crée restent ouverts jusqu'à la fin de celle-ci au lieu de fermer à minuit. Elle n'ajoute rien d'autre : en particulier, aucun message n'est conservé.",
+                    "Une période coûte 4,99 € pour 3 jours, 9,99 € pour 7 jours, 14,99 € pour 1 mois (30 jours) ou 34,99 € pour 3 mois (90 jours), toutes taxes comprises. Elle se paie une seule fois, par carte, via Stripe. Ce n'est pas un abonnement : rien ne se renouvelle et rien n'est jamais reprélevé.",
+                    "La période commence au paiement et se termine au minuit qui clôt son dernier jour (le 3ᵉ, le 7ᵉ, le 30ᵉ ou le 90ᵉ), dans le fuseau horaire de l'acheteur. Pendant la période, les salons que l'acheteur crée restent ouverts jusqu'à la fin de celle-ci au lieu de fermer à minuit. Elle n'ajoute rien d'autre : en particulier, aucun message n'est conservé.",
                     "La période est liée au compte (pseudonyme et mot de passe) avec lequel elle a été payée. Une seule période peut être en cours à la fois.",
                 ],
             ),
@@ -486,8 +494,8 @@ static DOCS_EN: [Doc; 4] = [
             (
                 "4. Paid periods",
                 &[
-                    "A period costs €4.99 for 3 days or €9.99 for 7 days, all taxes included. It is paid once, by card, through Stripe. It is not a subscription: nothing renews and nothing is ever charged again.",
-                    "The period starts at payment and ends at the midnight closing its 3rd or 7th day, in the buyer's time zone. During the period, the rooms the buyer creates stay open until it ends instead of closing at midnight. It adds nothing else: in particular, no message is kept.",
+                    "A period costs €4.99 for 3 days, €9.99 for 7 days, €14.99 for 1 month (30 days) or €34.99 for 3 months (90 days), all taxes included. It is paid once, by card, through Stripe. It is not a subscription: nothing renews and nothing is ever charged again.",
+                    "The period starts at payment and ends at the midnight closing its last day (the 3rd, 7th, 30th or 90th), in the buyer's time zone. During the period, the rooms the buyer creates stay open until it ends instead of closing at midnight. It adds nothing else: in particular, no message is kept.",
                     "The period is tied to the account (nickname and password) it was paid with. Only one period can run at a time.",
                 ],
             ),
@@ -668,8 +676,8 @@ static DOCS_ES: [Doc; 4] = [
             (
                 "4. Los periodos de pago",
                 &[
-                    "Un periodo cuesta 4,99 € por 3 días o 9,99 € por 7 días, impuestos incluidos. Se paga una sola vez, con tarjeta, a través de Stripe. No es una suscripción: nada se renueva y nunca se vuelve a cobrar.",
-                    "El periodo empieza con el pago y termina a la medianoche que cierra su 3.er o 7.º día, en la zona horaria del comprador. Durante el periodo, las salas que crea el comprador siguen abiertas hasta su final en lugar de cerrar a medianoche. No añade nada más: en particular, no se guarda ningún mensaje.",
+                    "Un periodo cuesta 4,99 € por 3 días, 9,99 € por 7 días, 14,99 € por 1 mes (30 días) o 34,99 € por 3 meses (90 días), impuestos incluidos. Se paga una sola vez, con tarjeta, a través de Stripe. No es una suscripción: nada se renueva y nunca se vuelve a cobrar.",
+                    "El periodo empieza con el pago y termina a la medianoche que cierra su último día (el 3.º, el 7.º, el 30.º o el 90.º), en la zona horaria del comprador. Durante el periodo, las salas que crea el comprador siguen abiertas hasta su final en lugar de cerrar a medianoche. No añade nada más: en particular, no se guarda ningún mensaje.",
                     "El periodo está vinculado a la cuenta (seudónimo y contraseña) con la que se pagó. Solo puede haber un periodo en curso a la vez.",
                 ],
             ),
