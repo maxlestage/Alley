@@ -144,6 +144,34 @@ pas les messages, pas la clé. Les photos font exception : il les vérifie au
 passage, en mémoire, puis les oublie. Comme tout serveur web, il voit les
 adresses IP qui se connectent.
 
+## Pages légales, aide et contact
+
+La vitrine a un pied de page complet (produit, aide, légal, langues) et quatre
+pages, en français, en anglais et en espagnol ([`src/legal.rs`](src/legal.rs)) :
+**mentions légales** (`/legal/`), **conditions d'utilisation et de vente**
+(`/terms/`), **confidentialité** (`/privacy/`) et **règles de la communauté**
+(`/rules/`), ainsi qu'une section **Tarifs**. L'application y renvoie (bas du
+hall, écran d'accueil), et un salon propose **« Signaler un abus »** : un
+e-mail prérempli (nom du salon, identifiant, heure) à l'éditeur.
+
+Avant de payer, une case d'**accord exprès** est obligatoire (conditions de
+vente, période qui commence tout de suite, renonciation au droit de
+rétractation) ; le serveur la vérifie aussi et en garde la preuve horodatée
+dans les métadonnées du paiement Stripe.
+
+Les coordonnées de l'éditeur ne sont pas dans le code : elles viennent de la
+configuration (serveur Heroku, et variables du dépôt pour GitHub Pages).
+
+| Variable | Pour |
+|---|---|
+| `ALLEY_PUBLISHER` | le nom ou la raison sociale de l'éditeur |
+| `ALLEY_PUBLISHER_ADDRESS` | son adresse |
+| `ALLEY_PUBLISHER_ID` | SIREN/SIRET, RCS… |
+| `ALLEY_CONTACT_EMAIL` | le contact, et les signalements (sans elle : le dépôt GitHub, et pas de bouton « Signaler ») |
+
+Ces textes sont un point de départ sérieux, pas un avis juridique : faites-les
+relire avant d'ouvrir les paiements au public.
+
 ## Périodes payantes
 
 On paie **une fois** une période ([`src/billing.rs`](src/billing.rs)), avec
